@@ -121,7 +121,7 @@ print(f"\nExtracting entities from {len(all_messages)} messages...")
 # Precompute per-message entity lists for co-occurrence (avoids re-querying G)
 msg_entities: dict[str, list[str]] = defaultdict(list)
 
-texts = [m["text"] for m in all_messages]
+texts = [m["text"][:nlp.max_length] for m in all_messages]
 
 for i, (msg, doc) in enumerate(zip(all_messages, nlp.pipe(texts, batch_size=64))):
     if i > 0 and i % 50 == 0:
