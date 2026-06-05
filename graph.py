@@ -1,47 +1,50 @@
 import sys
 import json
+import hashlib
+import pickle
 from pathlib import Path
 from collections import defaultdict
 
 import networkx as nx
 import pandas as pd
-import spacy
-from sklearn.feature_extraction.text import TfidfVectorizer
 
-# =====================================================
-# CONFIG
-# =====================================================
-
-def usage():
-    print(f"Usage: {sys.argv[0]} <data_dir>", file=sys.stderr)
-    sys.exit(1)
-
-if len(sys.argv) < 2:
-    usage()
-
-DATA_DIR = sys.argv[1]
 TOP_KEYWORDS_PER_MESSAGE = 5
 
-# =====================================================
-# LOAD NLP MODEL
-# =====================================================
 
-nlp = spacy.load("en_core_web_sm")
+def usage():
+    print(
+        f"Usage: {sys.argv[0]} -m <mode> [args...]",
+        file=sys.stderr,
+    )
+    print(f"  Modes:", file=sys.stderr)
+    print(f"    extract <json_dir> [pickle_path]  — read JSONs → deduped pickle", file=sys.stderr)
+    print(f"    graph   <pickle_path>              — pickle → knowledge graph", file=sys.stderr)
+    print(f"    full    <json_dir> [pickle_path]  — extract + graph", file=sys.stderr)
+    print(f"    Default pickle_path: messages.pkl", file=sys.stderr)
+    sys.exit(1)
 
-# =====================================================
-# GRAPH
-# =====================================================
 
-G = nx.MultiDiGraph()
+def parse_args():
+    if len(sys.argv) < 3 or sys.argv[1] != "-m":
+        usage()
 
-# =====================================================
-# HELPERS
-# =====================================================
+    mode = sys.argv[2]
+
+    if mode in ("extract", "full"):
+        if len(sys.argv) < 4:
+            usage()
+        json_dir = Path(sys.argv[3])
+        pickle_path = Path(sys.argv[4]) if len(sys.argv) > 4 else Path("messages.pkl")
+        return mode, json_dir, pickle_path
+
+    if mode == "graph":
+        pickle_path = Path(sys.argv[3]) if len(sys.argv) > 3 else Path("messages.pkl")
+        return mode, None, pickle_path
+
+    usage()
+
 
 def extract_messages(conversation):
-    """
-    Extract messages from ChatGPT export format.
-    """
     messages = []
     mapping = conversation.get("mapping", {})
 
@@ -57,7 +60,6 @@ def extract_messages(conversation):
             continue
 
         text = "\n".join(content.get("parts", []))
-
         messages.append({
             "id": node_id,
             "role": role,
@@ -68,195 +70,207 @@ def extract_messages(conversation):
     return messages
 
 
-# =====================================================
-# COLLECT ALL MESSAGES
-# =====================================================
+def text_hash(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
-all_messages = []
 
-json_files = list(Path(DATA_DIR).glob("*.json"))
-print(f"Found {len(json_files)} conversation files in '{DATA_DIR}/'")
+def run_extract(json_dir: Path, pickle_path: Path):
+    all_messages: list[dict] = []
+    seen_hashes: set[str] = set()
 
-for file in json_files:
-    try:
-        with open(file, "r", encoding="utf-8") as f:
-            conversation = json.load(f)
+    json_files = list(json_dir.glob("*.json"))
+    print(f"Found {len(json_files)} conversation files in '{json_dir}/'")
 
-        # Use the full path stem to reduce collision risk across subdirs
-        conversation_id = file.stem
+    for file in json_files:
+        try:
+            with open(file, "r", encoding="utf-8") as f:
+                conversation = json.load(f)
 
-        G.add_node(conversation_id, label="Conversation")
+            conversation_id = file.stem
+            messages = extract_messages(conversation)
 
-        messages = extract_messages(conversation)
+            for msg in messages:
+                msg["conversation_id"] = conversation_id
+                h = text_hash(msg["text"])
+                if h in seen_hashes:
+                    continue
+                seen_hashes.add(h)
+                all_messages.append(msg)
 
-        for msg in messages:
-            msg["conversation_id"] = conversation_id
-            all_messages.append(msg)
+            print(f"  {file.name}: {len(messages)} messages ({len(messages) - sum(1 for m in messages if text_hash(m['text']) in seen_hashes)} deduped)")
 
+        except Exception as e:
+            print(f"ERROR {file}: {e}")
+
+    with open(pickle_path, "wb") as f:
+        pickle.dump(all_messages, f)
+
+    print(f"\nSaved {len(all_messages)} deduplicated messages to {pickle_path}")
+
+
+def run_graph(pickle_path: Path):
+    with open(pickle_path, "rb") as f:
+        all_messages: list[dict] = pickle.load(f)
+
+    print(f"Loaded {len(all_messages)} messages from {pickle_path}")
+
+    import spacy
+    from sklearn.feature_extraction.text import TfidfVectorizer
+
+    nlp = spacy.load("en_core_web_sm")
+
+    G = nx.MultiDiGraph()
+    msg_entities: dict[str, list[str]] = defaultdict(list)
+
+    # ── Add conversation + message nodes/edges ──
+    conv_groups: dict[str, list[dict]] = defaultdict(list)
+    for msg in all_messages:
+        conv_groups[msg["conversation_id"]].append(msg)
+
+    for conv_id, msgs in conv_groups.items():
+        G.add_node(conv_id, label="Conversation")
+        for msg in msgs:
             G.add_node(
                 msg["id"],
                 label="Message",
                 role=msg["role"],
-                text=msg["text"][:1000],   # stored truncated; NLP uses full text
+                text=msg["text"][:1000],
             )
-
-            G.add_edge(conversation_id, msg["id"], relation="CONTAINS")
-
-            # Only wire the parent edge if the parent node actually exists
+            G.add_edge(conv_id, msg["id"], relation="CONTAINS")
             if msg["parent"] and G.has_node(msg["parent"]):
                 G.add_edge(msg["parent"], msg["id"], relation="REPLIES_TO")
 
-        print(f"  {file.name}: {len(messages)} messages")
+    print(f"Graph: {G.number_of_nodes()} nodes, {G.number_of_edges()} edges")
 
-    except Exception as e:
-        print(f"ERROR {file}: {e}")
+    # ── ENTITY EXTRACTION ──
+    entity_count = 0
+    print(f"\nExtracting entities from {len(all_messages)} messages...")
 
-# =====================================================
-# ENTITY EXTRACTION (spaCy) — batched with nlp.pipe
-# =====================================================
+    max_len = nlp.max_length
+    flat_texts: list[str] = []
+    flat_msg_idx: list[int] = []
 
-entity_count = 0
-print(f"\nExtracting entities from {len(all_messages)} messages...")
-
-# Precompute per-message entity lists for co-occurrence (avoids re-querying G)
-msg_entities: dict[str, list[str]] = defaultdict(list)
-
-# Flatten texts into chunks, tracking which message each belongs to
-max_len = nlp.max_length
-flat_texts: list[str] = []
-flat_msg_idx: list[int] = []
-
-for idx, msg in enumerate(all_messages):
-    text = msg["text"]
-    if len(text) > max_len:
-        for start in range(0, len(text), max_len):
-            flat_texts.append(text[start:start + max_len])
+    for idx, msg in enumerate(all_messages):
+        text = msg["text"]
+        if len(text) > max_len:
+            for start in range(0, len(text), max_len):
+                flat_texts.append(text[start:start + max_len])
+                flat_msg_idx.append(idx)
+        else:
+            flat_texts.append(text)
             flat_msg_idx.append(idx)
-    else:
-        flat_texts.append(text)
-        flat_msg_idx.append(idx)
 
-seen_per_msg: dict[int, set[str]] = defaultdict(set)
-total_chunks = len(flat_texts)
+    seen_per_msg: dict[int, set[str]] = defaultdict(set)
+    total_chunks = len(flat_texts)
 
-for i, doc in enumerate(nlp.pipe(flat_texts, batch_size=64)):
-    msg_idx = flat_msg_idx[i]
-    msg = all_messages[msg_idx]
-    seen = seen_per_msg[msg_idx]
+    for i, doc in enumerate(nlp.pipe(flat_texts, batch_size=64)):
+        msg_idx = flat_msg_idx[i]
+        msg = all_messages[msg_idx]
+        seen = seen_per_msg[msg_idx]
 
-    if i > 0 and i % 50 == 0:
-        print(f"  entities: chunk {i}/{total_chunks} ({entity_count} entities found)")
+        if i > 0 and i % 50 == 0:
+            print(f"  entities: chunk {i}/{total_chunks} ({entity_count} entities found)")
 
-    for ent in doc.ents:
-        entity_id = f"entity::{ent.label_}::{ent.text.lower()}"
+        for ent in doc.ents:
+            entity_id = f"entity::{ent.label_}::{ent.text.lower()}"
 
-        if not G.has_node(entity_id):
-            G.add_node(
-                entity_id,
-                label="Entity",
-                name=ent.text.lower(),
-                entity_type=ent.label_,
-            )
+            if not G.has_node(entity_id):
+                G.add_node(
+                    entity_id,
+                    label="Entity",
+                    name=ent.text.lower(),
+                    entity_type=ent.label_,
+                )
 
-        # Deduplicate MENTIONS edges across chunks of the same message
-        if entity_id not in seen:
-            G.add_edge(msg["id"], entity_id, relation="MENTIONS")
-            seen.add(entity_id)
-            entity_count += 1
+            if entity_id not in seen:
+                G.add_edge(msg["id"], entity_id, relation="MENTIONS")
+                seen.add(entity_id)
+                entity_count += 1
 
-        msg_entities[msg["id"]].append(entity_id)
+            msg_entities[msg["id"]].append(entity_id)
 
-print(f"  entities: done ({entity_count} total from {total_chunks} chunks across {len(all_messages)} messages)")
+    print(f"  entities: done ({entity_count} total from {total_chunks} chunks)")
 
-# =====================================================
-# KEYWORD EXTRACTION (TF-IDF)
-# =====================================================
+    # ── KEYWORD EXTRACTION ──
+    print(f"\nExtracting TF-IDF keywords...")
+    corpus = [m["text"] for m in all_messages]
 
-print(f"\nExtracting TF-IDF keywords...")
-corpus = [m["text"] for m in all_messages]
+    if corpus:
+        vectorizer = TfidfVectorizer(
+            stop_words="english",
+            max_features=10000,
+            ngram_range=(1, 2),
+        )
+        X = vectorizer.fit_transform(corpus)
+        feature_names = vectorizer.get_feature_names_out()
 
-if corpus:
-    vectorizer = TfidfVectorizer(
-        stop_words="english",
-        max_features=10000,
-        ngram_range=(1, 2),
-    )
+        for row_idx, msg in enumerate(all_messages):
+            row = X[row_idx]
+            if row.nnz == 0:
+                continue
 
-    X = vectorizer.fit_transform(corpus)
-    feature_names = vectorizer.get_feature_names_out()
+            indices = row.indices
+            data = row.data
+            top_order = data.argsort()[-TOP_KEYWORDS_PER_MESSAGE:][::-1]
 
-    for row_idx, msg in enumerate(all_messages):
-        row = X[row_idx]
+            for pos in top_order:
+                score = data[pos]
+                keyword = feature_names[indices[pos]]
+                keyword_id = f"keyword::{keyword}"
 
-        # Use sparse indices/data directly — no densification
-        if row.nnz == 0:
-            continue
+                if not G.has_node(keyword_id):
+                    G.add_node(keyword_id, label="Keyword", name=keyword)
 
-        indices = row.indices
-        data = row.data
-        top_order = data.argsort()[-TOP_KEYWORDS_PER_MESSAGE:][::-1]
+                G.add_edge(
+                    msg["id"],
+                    keyword_id,
+                    relation="HAS_KEYWORD",
+                    weight=float(score),
+                )
 
-        for pos in top_order:
-            score = data[pos]
-            keyword = feature_names[indices[pos]]
-            keyword_id = f"keyword::{keyword}"
+    # ── CO-OCCURRENCE ──
+    cooc_edges = 0
+    print(f"\nBuilding entity co-occurrence edges...")
 
-            if not G.has_node(keyword_id):
-                G.add_node(keyword_id, label="Keyword", name=keyword)
+    for msg in all_messages:
+        entity_nodes = list(dict.fromkeys(msg_entities[msg["id"]]))
 
-            G.add_edge(
-                msg["id"],
-                keyword_id,
-                relation="HAS_KEYWORD",
-                weight=float(score),
-            )
+        for i in range(len(entity_nodes)):
+            for j in range(i + 1, len(entity_nodes)):
+                a, b = entity_nodes[i], entity_nodes[j]
+                if a > b:
+                    a, b = b, a
+                G.add_edge(a, b, relation="CO_OCCURS_WITH")
+                cooc_edges += 1
 
-# =====================================================
-# CO-OCCURRENCE GRAPH BETWEEN ENTITIES
-# =====================================================
+    print(f"  Added {cooc_edges} co-occurrence edges")
 
-cooc_edges = 0
-print(f"\nBuilding entity co-occurrence edges...")
+    # ── EXPORT ──
+    nx.write_graphml(G, "knowledge_graph.graphml")
+    print("\nDone")
+    print("Nodes:", G.number_of_nodes())
+    print("Edges:", G.number_of_edges())
+    print("Saved: knowledge_graph.graphml")
 
-# Use the precomputed dict — no G.out_edges scan per message
-for msg in all_messages:
-    entity_nodes = list(dict.fromkeys(msg_entities[msg["id"]]))  # deduplicated, order-preserved
+    nodes = [{"id": node, **attrs} for node, attrs in G.nodes(data=True)]
+    pd.DataFrame(nodes).to_csv("nodes.csv", index=False)
 
-    for i in range(len(entity_nodes)):
-        for j in range(i + 1, len(entity_nodes)):
-            a, b = entity_nodes[i], entity_nodes[j]
-            # Normalize direction so (a,b) and (b,a) are the same pair
-            if a > b:
-                a, b = b, a
-            G.add_edge(a, b, relation="CO_OCCURS_WITH")
-            cooc_edges += 1
+    edges = [{"source": src, "target": tgt, **attrs} for src, tgt, attrs in G.edges(data=True)]
+    pd.DataFrame(edges).to_csv("edges.csv", index=False)
 
-print(f"  Added {cooc_edges} co-occurrence edges")
+    print("Saved: nodes.csv")
+    print("Saved: edges.csv")
 
-# =====================================================
-# EXPORT GRAPHML
-# =====================================================
 
-nx.write_graphml(G, "knowledge_graph.graphml")
+def main():
+    mode, json_dir, pickle_path = parse_args()
 
-print("\nDone")
-print("Nodes:", G.number_of_nodes())
-print("Edges:", G.number_of_edges())
-print("Saved: knowledge_graph.graphml")
+    if mode in ("extract", "full"):
+        run_extract(json_dir, pickle_path)
 
-# =====================================================
-# EXPORT CSV NODES
-# =====================================================
+    if mode in ("graph", "full"):
+        run_graph(pickle_path)
 
-nodes = [{"id": node, **attrs} for node, attrs in G.nodes(data=True)]
-pd.DataFrame(nodes).to_csv("nodes.csv", index=False)
 
-# =====================================================
-# EXPORT CSV EDGES
-# =====================================================
-
-edges = [{"source": src, "target": tgt, **attrs} for src, tgt, attrs in G.edges(data=True)]
-pd.DataFrame(edges).to_csv("edges.csv", index=False)
-
-print("Saved: nodes.csv")
-print("Saved: edges.csv")
+if __name__ == "__main__":
+    main()
