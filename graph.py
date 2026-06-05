@@ -121,16 +121,33 @@ print(f"\nExtracting entities from {len(all_messages)} messages...")
 # Precompute per-message entity lists for co-occurrence (avoids re-querying G)
 msg_entities: dict[str, list[str]] = defaultdict(list)
 
-texts = [m["text"][:nlp.max_length] for m in all_messages]
+# Flatten texts into chunks, tracking which message each belongs to
+max_len = nlp.max_length
+flat_texts: list[str] = []
+flat_msg_idx: list[int] = []
 
-for i, (msg, doc) in enumerate(zip(all_messages, nlp.pipe(texts, batch_size=64))):
+for idx, msg in enumerate(all_messages):
+    text = msg["text"]
+    if len(text) > max_len:
+        for start in range(0, len(text), max_len):
+            flat_texts.append(text[start:start + max_len])
+            flat_msg_idx.append(idx)
+    else:
+        flat_texts.append(text)
+        flat_msg_idx.append(idx)
+
+seen_per_msg: dict[int, set[str]] = defaultdict(set)
+total_chunks = len(flat_texts)
+
+for i, doc in enumerate(nlp.pipe(flat_texts, batch_size=64)):
+    msg_idx = flat_msg_idx[i]
+    msg = all_messages[msg_idx]
+    seen = seen_per_msg[msg_idx]
+
     if i > 0 and i % 50 == 0:
-        print(f"  entities: {i}/{len(all_messages)} messages processed ({entity_count} found)")
-
-    seen_in_msg: set[str] = set()
+        print(f"  entities: chunk {i}/{total_chunks} ({entity_count} entities found)")
 
     for ent in doc.ents:
-        # Normalize to avoid "Python" vs "python" duplicates
         entity_id = f"entity::{ent.label_}::{ent.text.lower()}"
 
         if not G.has_node(entity_id):
@@ -141,15 +158,15 @@ for i, (msg, doc) in enumerate(zip(all_messages, nlp.pipe(texts, batch_size=64))
                 entity_type=ent.label_,
             )
 
-        # Deduplicate MENTIONS edges within the same message
-        if entity_id not in seen_in_msg:
+        # Deduplicate MENTIONS edges across chunks of the same message
+        if entity_id not in seen:
             G.add_edge(msg["id"], entity_id, relation="MENTIONS")
-            seen_in_msg.add(entity_id)
+            seen.add(entity_id)
             entity_count += 1
 
         msg_entities[msg["id"]].append(entity_id)
 
-print(f"  entities: done ({entity_count} total)")
+print(f"  entities: done ({entity_count} total from {total_chunks} chunks across {len(all_messages)} messages)")
 
 # =====================================================
 # KEYWORD EXTRACTION (TF-IDF)
