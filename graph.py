@@ -1,5 +1,6 @@
 import sys
 import json
+import gc
 import hashlib
 import pickle
 from pathlib import Path
@@ -18,10 +19,12 @@ def usage():
     )
     print(f"  Modes:", file=sys.stderr)
     print(f"    extract <json_dir> [pickle_path]   — read JSONs → deduped pickle", file=sys.stderr)
-    print(f"    graph   <pickle_path> [--pickle]   — pickle → knowledge graph", file=sys.stderr)
-    print(f"    full    <json_dir> [pickle_path]   — extract + graph", file=sys.stderr)
+    print(f"    graph   <pickle_path> [--pickle] [--debug] [--limit N]  — pickle → knowledge graph", file=sys.stderr)
+    print(f"    full    <json_dir> [pickle_path]              — extract + graph", file=sys.stderr)
     print(f"    Default pickle_path: messages.pkl", file=sys.stderr)
     print(f"    --pickle  also export G as knowledge_graph.pkl", file=sys.stderr)
+    print(f"    --debug   print each message and its extracted entities", file=sys.stderr)
+    print(f"    --limit N only process first N messages", file=sys.stderr)
     sys.exit(1)
 
 
@@ -31,25 +34,33 @@ def parse_args():
 
     mode = sys.argv[2]
 
-    if mode in ("extract", "full"):
-        if len(sys.argv) < 4:
+    remaining = sys.argv[3:]
+    pickle_path = Path("messages.pkl")
+    json_dir = None
+    export_pickle = False
+    debug = False
+    limit = 0
+
+    for arg in remaining:
+        if arg == "--pickle":
+            export_pickle = True
+        elif arg == "--debug":
+            debug = True
+        elif arg.startswith("--limit="):
+            limit = int(arg.split("=", 1)[1])
+        elif arg.startswith("--"):
+            continue
+        elif json_dir is None and mode in ("extract", "full"):
+            json_dir = Path(arg)
+        elif pickle_path == Path("messages.pkl"):
+            pickle_path = Path(arg)
+        else:
             usage()
-        json_dir = Path(sys.argv[3])
-        pickle_path = Path(sys.argv[4]) if len(sys.argv) > 4 else Path("messages.pkl")
-        return mode, json_dir, pickle_path, False
 
-    if mode == "graph":
-        pickle_path = Path("messages.pkl")
-        export_pickle = False
-        remaining = sys.argv[3:]
-        for i, arg in enumerate(remaining):
-            if arg == "--pickle":
-                export_pickle = True
-            elif pickle_path == Path("messages.pkl") and not arg.startswith("--"):
-                pickle_path = Path(arg)
-        return mode, None, pickle_path, export_pickle
+    if mode in ("extract", "full") and json_dir is None:
+        usage()
 
-    usage()
+    return mode, json_dir, pickle_path, export_pickle, debug, limit
 
 
 def extract_messages(conversation):
@@ -116,16 +127,21 @@ def run_extract(json_dir: Path, pickle_path: Path):
     print(f"\nSaved {len(all_messages)} deduplicated messages to {pickle_path}")
 
 
-def run_graph(pickle_path: Path, export_pickle: bool = False):
+def run_graph(pickle_path: Path, export_pickle: bool = False, debug: bool = False, limit: int = 0):
     with open(pickle_path, "rb") as f:
         all_messages: list[dict] = pickle.load(f)
 
     print(f"Loaded {len(all_messages)} messages from {pickle_path}")
 
+    if limit:
+        all_messages = all_messages[:limit]
+        print(f"Limited to {limit} messages")
+
     import spacy
     from sklearn.feature_extraction.text import TfidfVectorizer
 
-    nlp = spacy.load("en_core_web_sm")
+    nlp = spacy.load("en_core_web_sm", disable=["tagger", "parser", "attribute_ruler", "lemmatizer"])
+    nlp.max_length = 100_000
 
     G = nx.MultiDiGraph()
 
@@ -156,46 +172,42 @@ def run_graph(pickle_path: Path, export_pickle: bool = False):
     max_len = nlp.max_length
 
     cooc_edges = 0
+    next_print = 500
 
-    for batch_start in range(0, len(all_messages), 64):
-        batch = all_messages[batch_start:batch_start + 64]
-        flat_texts: list[str] = []
-        flat_msg_idx: list[int] = []
+    for batch_start in range(0, len(all_messages), 16):
+        batch = all_messages[batch_start:batch_start + 16]
+
+        seen_per_msg: dict[int, set[str]] = defaultdict(set)
 
         for offset, msg in enumerate(batch):
             text = msg["text"]
             if len(text) > max_len:
-                for start in range(0, len(text), max_len):
-                    flat_texts.append(text[start:start + max_len])
-                    flat_msg_idx.append(offset)
+                chunks = [text[s:s + max_len] for s in range(0, len(text), max_len)]
             else:
-                flat_texts.append(text)
-                flat_msg_idx.append(offset)
+                chunks = [text]
 
-        seen_per_msg: dict[int, set[str]] = defaultdict(set)
+            msg_entities_list: list[str] = []
 
-        for i, doc in enumerate(nlp.pipe(flat_texts, batch_size=8)):
-            msg = batch[flat_msg_idx[i]]
-            seen = seen_per_msg[flat_msg_idx[i]]
+            for chunk in chunks:
+                doc = nlp(chunk)
+                for ent in doc.ents:
+                    entity_id = f"entity::{ent.label_}::{ent.text.lower()}"
+                    if not G.has_node(entity_id):
+                        G.add_node(entity_id, label="Entity", name=ent.text.lower(), entity_type=ent.label_)
+                    if entity_id not in seen_per_msg[offset]:
+                        G.add_edge(msg["id"], entity_id, relation="MENTIONS")
+                        seen_per_msg[offset].add(entity_id)
+                        entity_count += 1
+                        msg_entities_list.append(f"{ent.label_}:{ent.text}")
 
-            if entity_count > 0 and entity_count % 500 == 0:
-                print(f"  entities: {entity_count} found...")
+            if debug and msg_entities_list:
+                print(f"  msg {msg['id']}: {', '.join(msg_entities_list)}")
 
-            for ent in doc.ents:
-                entity_id = f"entity::{ent.label_}::{ent.text.lower()}"
+        if entity_count >= next_print:
+            print(f"  entities: {entity_count} found...")
+            next_print = entity_count + 500
 
-                if not G.has_node(entity_id):
-                    G.add_node(
-                        entity_id,
-                        label="Entity",
-                        name=ent.text.lower(),
-                        entity_type=ent.label_,
-                    )
-
-                if entity_id not in seen:
-                    G.add_edge(msg["id"], entity_id, relation="MENTIONS")
-                    seen.add(entity_id)
-                    entity_count += 1
+        gc.collect()
 
         for entities in seen_per_msg.values():
             entity_list = list(entities)
@@ -209,6 +221,7 @@ def run_graph(pickle_path: Path, export_pickle: bool = False):
 
     print(f"  entities: done ({entity_count} total)")
     print(f"  Added {cooc_edges} co-occurrence edges")
+    gc.collect()
 
     # ── KEYWORD EXTRACTION ──
     print(f"\nExtracting TF-IDF keywords...")
@@ -267,13 +280,13 @@ def run_graph(pickle_path: Path, export_pickle: bool = False):
 
 
 def main():
-    mode, json_dir, pickle_path, export_pickle = parse_args()
+    mode, json_dir, pickle_path, export_pickle, debug, limit = parse_args()
 
     if mode in ("extract", "full"):
         run_extract(json_dir, pickle_path)
 
     if mode in ("graph", "full"):
-        run_graph(pickle_path, export_pickle)
+        run_graph(pickle_path, export_pickle, debug, limit)
 
 
 if __name__ == "__main__":
