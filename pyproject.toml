@@ -1,0 +1,132 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "convo-tools"
+version = "0.1.0"
+description = "Build knowledge graphs from ChatGPT conversation exports"
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+authors = [
+    {name = "Dar\u00edo Clavijo", email = "clavijodario@gmail.com"}
+]
+dependencies = [
+    "networkx",
+    "pandas",
+    "spacy",
+    "scikit-learn",
+]
+
+[project.optional-dependencies]
+dev = [
+    "ruff",
+    "mypy",
+    "hatch",
+    "pip-api",
+    "mdformat",
+]
+test = [
+    "pytest",
+    "pytest-cov",
+    "pytest-mock",
+    "hypothesis",
+]
+lint = [
+    "prospector[with_ruff,with_mypy]",
+    "vulture",
+    "lizard",
+    "mdformat",
+]
+all = ["convo-tools[dev,test,lint]"]
+
+[project.scripts]
+convo-tools = "convo_tools.__main__:main"
+
+[project.urls]
+Homepage = "https://github.com/daedalus/convo-tools"
+Repository = "https://github.com/daedalus/convo-tools"
+Issues = "https://github.com/daedalus/convo-tools/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/convo_tools"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/convo_tools"]
+
+[tool.hatch.build]
+exclude = [
+    "tests/",
+    "docs/",
+    "tools/",
+    ".github/",
+    "convos.pkl",
+    "*.bin",
+    "*.graphml",
+    "*.csv",
+    "knowledge_graph.pkl",
+    "memray-table-output.html",
+    "mprofile_*",
+]
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "ANN", "TCH", "N", "C4", "ARG"]
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401"]
+"tests/*" = ["ANN"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_return_any = true
+warn_unused_ignores = true
+ignore_missing_imports = true
+
+[tool.prospector]
+output-format = "text"
+strictness = "medium"
+test-warnings = false
+
+[tool.prospector.tools]
+ruff = true
+mypy = true
+pyflakes = false
+pycodestyle = false
+mccabe = true
+
+[tool.prospector.tools.pylint]
+disable = [
+    "too-many-branches",
+    "too-many-statements",
+    "too-many-locals",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v --tb=short --cov=src --cov-fail-under=80"
+filterwarnings = ["ignore::DeprecationWarning"]
+
+[tool.coverage.run]
+source = ["src"]
+branch = true
+
+[tool.coverage.report]
+exclude = ["tests/*", "*/__init__.py"]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+]
