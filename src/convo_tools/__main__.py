@@ -6,6 +6,7 @@ from pathlib import Path
 
 from convo_tools._builder import run_graph
 from convo_tools._centrality import run_centrality
+from convo_tools._depth import run_depth
 from convo_tools._export import run_export
 from convo_tools._extract import run_extract
 from convo_tools._ingest import run_ingest
@@ -23,7 +24,7 @@ def _build_base_parser() -> argparse.ArgumentParser:
     )
     ap.add_argument(
         "-m", "--mode", required=True,
-        choices=["extract", "graph", "full", "join", "split", "export", "timeline", "centrality", "similarity", "ingest", "topics"],
+        choices=["extract", "graph", "full", "join", "split", "export", "timeline", "centrality", "similarity", "ingest", "topics", "depth"],
         help="Operation mode",
     )
     return ap
@@ -293,8 +294,29 @@ def _build_split_parser() -> argparse.ArgumentParser:
     return ap
 
 
+def _build_depth_parser() -> argparse.ArgumentParser:
+    ap = argparse.ArgumentParser(
+        prog=f"{sys.argv[0]} -m depth",
+        description="Analyze reply-chain depth and branching in conversation DAGs.",
+    )
+    ap.add_argument(
+        "pickle_path", nargs="?", type=Path, default=Path("knowledge_graph.pkl"),
+        help="Input knowledge graph pickle (default: knowledge_graph.pkl)",
+    )
+    ap.add_argument(
+        "--top", type=int, default=20,
+        help="Show top N conversations by depth (default: 20)",
+    )
+    ap.add_argument(
+        "-o", "--output", type=Path,
+        help="Output CSV file with per-conversation metrics",
+    )
+    return ap
+
+
 PARSERS = {
     "centrality": _build_centrality_parser,
+    "depth": _build_depth_parser,
     "ingest": _build_ingest_parser,
     "similarity": _build_similarity_parser,
     "topics": _build_topics_parser,
@@ -324,6 +346,8 @@ def main() -> int:
 
     if mode == "centrality":
         run_centrality(args)
+    elif mode == "depth":
+        run_depth(args)
     elif mode == "ingest":
         run_ingest(args)
     elif mode == "similarity":
