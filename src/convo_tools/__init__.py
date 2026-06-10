@@ -6,6 +6,7 @@ from convo_tools._builder import build_graph
 from convo_tools._centrality import run_centrality
 from convo_tools._export import graph_to_gexf
 from convo_tools._extract import extract_messages
+from convo_tools._ingest import graph_to_kuzu
 from convo_tools._similarity import run_similarity
 from convo_tools._timeline import run_timeline
 from convo_tools._util import text_hash
@@ -14,6 +15,7 @@ __all__ = [
     "build_graph",
     "extract_messages",
     "graph_to_gexf",
+    "graph_to_kuzu",
     "run_centrality",
     "run_similarity",
     "run_timeline",

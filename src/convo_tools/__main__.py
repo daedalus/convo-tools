@@ -8,6 +8,7 @@ from convo_tools._builder import run_graph
 from convo_tools._centrality import run_centrality
 from convo_tools._export import run_export
 from convo_tools._extract import run_extract
+from convo_tools._ingest import run_ingest
 from convo_tools._join import run_join
 from convo_tools._similarity import run_similarity
 from convo_tools._split import run_split
@@ -21,7 +22,7 @@ def _build_base_parser() -> argparse.ArgumentParser:
     )
     ap.add_argument(
         "-m", "--mode", required=True,
-        choices=["extract", "graph", "full", "join", "split", "export", "timeline", "centrality", "similarity"],
+        choices=["extract", "graph", "full", "join", "split", "export", "timeline", "centrality", "similarity", "ingest"],
         help="Operation mode",
     )
     return ap
@@ -122,6 +123,26 @@ def _build_join_parser() -> argparse.ArgumentParser:
     ap.add_argument(
         "--no-dedup", action="store_false", dest="dedup",
         help="Skip content-hash deduplication",
+    )
+    return ap
+
+
+def _build_ingest_parser() -> argparse.ArgumentParser:
+    ap = argparse.ArgumentParser(
+        prog=f"{sys.argv[0]} -m ingest",
+        description="Ingest knowledge graph into Kuzu property graph database.",
+    )
+    ap.add_argument(
+        "pickle_path", nargs="?", type=Path, default=Path("knowledge_graph.pkl"),
+        help="Input knowledge graph pickle (default: knowledge_graph.pkl)",
+    )
+    ap.add_argument(
+        "db_path", nargs="?", type=Path, default=Path("knowledge_graph.kzu"),
+        help="Output Kuzu database directory (default: knowledge_graph.kzu)",
+    )
+    ap.add_argument(
+        "--overwrite", action="store_true",
+        help="Delete existing database directory before ingest",
     )
     return ap
 
@@ -249,6 +270,7 @@ def _build_split_parser() -> argparse.ArgumentParser:
 
 PARSERS = {
     "centrality": _build_centrality_parser,
+    "ingest": _build_ingest_parser,
     "similarity": _build_similarity_parser,
     "export": _build_export_parser,
     "extract": _build_extract_parser,
@@ -276,6 +298,8 @@ def main() -> int:
 
     if mode == "centrality":
         run_centrality(args)
+    elif mode == "ingest":
+        run_ingest(args)
     elif mode == "similarity":
         run_similarity(args)
     elif mode == "export":

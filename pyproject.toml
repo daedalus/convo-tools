@@ -27,6 +27,9 @@ dev = [
     "pip-api",
     "mdformat",
 ]
+kuzu = [
+    "kuzu",
+]
 test = [
     "pytest",
     "pytest-cov",
