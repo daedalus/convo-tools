@@ -427,6 +427,11 @@ def parse_file(filepath: str) -> list[dict[str, Any]]:
         data = json.load(f)
     fmt = detect_format(data, filepath)
     if fmt == "chatgpt_export_summary":
+        print(
+            f"  Skipping {filepath}: ChatGPT export summary format "
+            "(use 'extract' mode to process these)",
+            file=sys.stderr,
+        )
         return []
     parser = PARSER_DISPATCH.get(fmt)
     if not parser:

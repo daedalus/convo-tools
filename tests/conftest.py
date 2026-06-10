@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from unittest.mock import MagicMock
-
 import pytest
 
 
@@ -58,26 +56,5 @@ def sample_messages() -> list[dict]:
             "conversation_id": "conv1",
         },
     ]
-
-
-@pytest.fixture
-def mock_spacy_nlp():
-    """Create a mock spaCy nlp object that returns controlled entities."""
-    mock_nlp = MagicMock()
-    mock_nlp.max_length = 100_000
-
-    def _make_doc(text):
-        doc = MagicMock()
-        doc.ents = []
-        if "Fibonacci" in text:
-            ent = MagicMock()
-            ent.label_ = "PERSON"
-            ent.text = "Fibonacci"
-            doc.ents = [ent]
-        return doc
-
-    mock_nlp.side_effect = _make_doc
-    return mock_nlp
-
 
 

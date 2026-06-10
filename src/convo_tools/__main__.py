@@ -10,145 +10,180 @@ from convo_tools._join import run_join
 from convo_tools._split import run_split
 
 
-def usage() -> None:
-    print(
-        f"Usage: {sys.argv[0]} -m <mode> [args...]",
-        file=sys.stderr,
+def _build_base_parser() -> argparse.ArgumentParser:
+    ap = argparse.ArgumentParser(
+        prog=f"{sys.argv[0]} -m",
+        description="Conversation analysis toolkit.",
     )
-    print("  Modes:", file=sys.stderr)
-    print(
-        "    extract <json_dir> [pickle_path]   — read JSONs → deduped pickle",
-        file=sys.stderr,
+    ap.add_argument(
+        "-m", "--mode", required=True,
+        choices=["extract", "graph", "full", "join", "split"],
+        help="Operation mode",
     )
-    print(
-        "    graph   <pickle_path> [--pickle] [--debug] [--limit N]  — pickle → knowledge graph",
-        file=sys.stderr,
+    return ap
+
+
+def _build_extract_parser() -> argparse.ArgumentParser:
+    ap = argparse.ArgumentParser(
+        prog=f"{sys.argv[0]} -m extract",
+        description="Read JSON conversation exports, deduplicate, and save as pickle.",
     )
-    print(
-        "    full    <json_dir> [pickle_path]              — extract + graph",
-        file=sys.stderr,
+    ap.add_argument("json_dir", type=Path, help="Directory containing .json files")
+    ap.add_argument(
+        "pickle_path", nargs="?", type=Path, default=Path("messages.pkl"),
+        help="Output pickle path (default: messages.pkl)",
     )
-    print(
-        "    join    -i <path> [-i ...] -f <format>   — join multi-provider files",
-        file=sys.stderr,
+    return ap
+
+
+def _build_graph_parser() -> argparse.ArgumentParser:
+    ap = argparse.ArgumentParser(
+        prog=f"{sys.argv[0]} -m graph",
+        description="Build a knowledge graph from a pickle of extracted messages.",
     )
-    print(
-        "    split   [input_file] [-o <dir>]          — split conversations JSON",
-        file=sys.stderr,
+    ap.add_argument(
+        "pickle_path", nargs="?", type=Path, default=Path("messages.pkl"),
+        help="Input pickle path (default: messages.pkl)",
     )
-    print("    Default pickle_path: messages.pkl", file=sys.stderr)
-    print(
-        "    --pickle  also export graph data as knowledge_graph.pkl", file=sys.stderr
+    ap.add_argument(
+        "--pickle", action="store_true",
+        help="Export graph data as knowledge_graph.pkl",
     )
-    print(
-        "    --debug   print each message and its extracted entities", file=sys.stderr
+    ap.add_argument(
+        "--debug", action="store_true",
+        help="Print each message and its extracted entities",
     )
-    print("    --limit N     only process first N messages (after --offset)", file=sys.stderr)
-    print(
-        "    --offset N    skip first N messages (use with --limit for pagination)",
-        file=sys.stderr,
+    ap.add_argument(
+        "--limit", type=int, default=0,
+        help="Only process first N messages (after --offset)",
     )
-    sys.exit(1)
+    ap.add_argument(
+        "--offset", type=int, default=0,
+        help="Skip first N messages (use with --limit for pagination)",
+    )
+    return ap
+
+
+def _build_full_parser() -> argparse.ArgumentParser:
+    ap = argparse.ArgumentParser(
+        prog=f"{sys.argv[0]} -m full",
+        description="Extract + graph in one step.",
+    )
+    ap.add_argument("json_dir", type=Path, help="Directory containing .json files")
+    ap.add_argument(
+        "pickle_path", nargs="?", type=Path, default=Path("messages.pkl"),
+        help="Intermediate/output pickle path (default: messages.pkl)",
+    )
+    ap.add_argument(
+        "--pickle", action="store_true",
+        help="Export graph data as knowledge_graph.pkl",
+    )
+    ap.add_argument(
+        "--debug", action="store_true",
+        help="Print each message and its extracted entities",
+    )
+    ap.add_argument(
+        "--limit", type=int, default=0,
+        help="Only process first N messages (after --offset)",
+    )
+    ap.add_argument(
+        "--offset", type=int, default=0,
+        help="Skip first N messages (use with --limit for pagination)",
+    )
+    return ap
+
+
+def _build_join_parser() -> argparse.ArgumentParser:
+    ap = argparse.ArgumentParser(
+        prog=f"{sys.argv[0]} -m join",
+        description="Join multiple conversation files into one normalized JSON.",
+    )
+    ap.add_argument(
+        "-i", "--input", required=True, nargs="+",
+        help="Input files/directories (.json, .md)",
+    )
+    ap.add_argument(
+        "-f", "--format", required=True,
+        choices=["anthropic", "openai", "gemini"],
+        help="Output format",
+    )
+    ap.add_argument(
+        "-o", "--output",
+        help="Output file (default: stdout)",
+    )
+    ap.add_argument(
+        "--dedup", action="store_true", default=True,
+        help="Deduplicate conversations by content hash (default: on)",
+    )
+    ap.add_argument(
+        "--no-dedup", action="store_false", dest="dedup",
+        help="Skip content-hash deduplication",
+    )
+    return ap
+
+
+def _build_split_parser() -> argparse.ArgumentParser:
+    ap = argparse.ArgumentParser(
+        prog=f"{sys.argv[0]} -m split",
+        description="Split a conversations JSON into individual files.",
+    )
+    ap.add_argument(
+        "input_file", nargs="?", default="conversations.json",
+        help="Input JSON file (use '-' to read from stdin)",
+    )
+    ap.add_argument(
+        "-o", "--output-dir", default="conversations",
+        help="Output directory (default: conversations)",
+    )
+    return ap
+
+
+PARSERS = {
+    "extract": _build_extract_parser,
+    "graph": _build_graph_parser,
+    "full": _build_full_parser,
+    "join": _build_join_parser,
+    "split": _build_split_parser,
+}
 
 
 def main() -> int:
-    if len(sys.argv) < 3 or sys.argv[1] != "-m":
-        usage()
+    base = _build_base_parser()
+    if len(sys.argv) < 3:
+        base.print_help()
+        return 1
 
     mode = sys.argv[2]
+    if mode not in PARSERS:
+        base.print_help()
+        return 1
+
     remaining = sys.argv[3:]
+    args = PARSERS[mode]().parse_args(remaining)
 
     if mode == "join":
-        ap = argparse.ArgumentParser(
-            description="Join multiple conversation files into one normalized JSON."
+        run_join(args)
+    elif mode == "split":
+        run_split(args)
+    elif mode == "extract":
+        run_extract(args.json_dir, args.pickle_path)
+    elif mode == "graph":
+        run_graph(
+            args.pickle_path,
+            export_pickle=args.pickle,
+            debug=args.debug,
+            limit=args.limit,
+            offset=args.offset,
         )
-        ap.add_argument(
-            "-i", "--input", required=True, nargs="+",
-            help="Input files/directories (.json, .md)",
+    elif mode == "full":
+        run_extract(args.json_dir, args.pickle_path)
+        run_graph(
+            args.pickle_path,
+            export_pickle=args.pickle,
+            debug=args.debug,
+            limit=args.limit,
+            offset=args.offset,
         )
-        ap.add_argument(
-            "-f", "--format", required=True,
-            choices=["anthropic", "openai", "gemini"],
-            help="Output format",
-        )
-        ap.add_argument(
-            "-o", "--output", help="Output file (default: stdout)"
-        )
-        ap.add_argument(
-            "--dedup", action="store_true", default=True,
-            help="Deduplicate conversations by content hash (default: on)",
-        )
-        ap.add_argument(
-            "--no-dedup", action="store_false", dest="dedup",
-            help="Skip content-hash deduplication",
-        )
-        run_join(ap.parse_args(remaining))
-        return 0
-
-    if mode == "split":
-        ap = argparse.ArgumentParser(
-            description="Split a conversations JSON into individual files"
-        )
-        ap.add_argument(
-            "input_file", nargs="?", default="conversations.json",
-            help="Input JSON file (use '-' to read from stdin)",
-        )
-        ap.add_argument(
-            "-o", "--output-dir", default="conversations",
-            help="Output directory (default: conversations)",
-        )
-        run_split(ap.parse_args(remaining))
-        return 0
-
-    if mode not in ("extract", "graph", "full"):
-        usage()
-
-    pickle_path = Path("messages.pkl")
-    json_dir: Path | None = None
-    export_pickle = False
-    debug = False
-    limit = 0
-    offset = 0
-
-    i = 0
-    while i < len(remaining):
-        arg = remaining[i]
-        if arg == "--pickle":
-            export_pickle = True
-        elif arg == "--debug":
-            debug = True
-        elif arg == "--limit":
-            i += 1
-            if i >= len(remaining):
-                usage()
-            limit = int(remaining[i])
-        elif arg.startswith("--limit="):
-            limit = int(arg.split("=", 1)[1])
-        elif arg == "--offset":
-            i += 1
-            if i >= len(remaining):
-                usage()
-            offset = int(remaining[i])
-        elif arg.startswith("--offset="):
-            offset = int(arg.split("=", 1)[1])
-        elif arg.startswith("--"):
-            pass
-        elif json_dir is None and mode in ("extract", "full"):
-            json_dir = Path(arg)
-        elif pickle_path == Path("messages.pkl"):
-            pickle_path = Path(arg)
-        else:
-            usage()
-        i += 1
-
-    if mode in ("extract", "full") and json_dir is None:
-        usage()
-
-    if mode in ("extract", "full") and json_dir is not None:
-        run_extract(json_dir, pickle_path)
-
-    if mode in ("graph", "full"):
-        run_graph(pickle_path, export_pickle, debug, limit, offset)
 
     return 0
 

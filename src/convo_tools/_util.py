@@ -23,10 +23,18 @@ def _progressbar(iterable: Iterable[Any], total: int, prefix: str = "", width: i
 
 
 def _rss_mb() -> float:
-    with open("/proc/self/status", encoding="utf-8") as f:
-        for line in f:
-            if line.startswith("VmRSS:"):
-                return int(line.split()[1]) / 1024
+    try:
+        with open("/proc/self/status", encoding="utf-8") as f:
+            for line in f:
+                if line.startswith("VmRSS:"):
+                    return int(line.split()[1]) / 1024
+    except FileNotFoundError:
+        pass
+    try:
+        import resource
+        return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024
+    except (ImportError, AttributeError):
+        pass
     return 0.0
 
 

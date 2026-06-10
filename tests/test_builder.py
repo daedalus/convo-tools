@@ -84,7 +84,7 @@ class TestBuildGraph:
             }
             for i in range(10)
         ]
-        graph = build_graph(msgs, limit=3)
+        graph = build_graph(msgs[:3])
         msg_ids = {k for k, v in graph["nodes"].items() if v.get("label") == "Message"}
         assert len(msg_ids) == 3
         assert ("c1", "msg0") in graph["edges_contains"]

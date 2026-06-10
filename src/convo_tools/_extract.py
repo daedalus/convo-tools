@@ -53,6 +53,7 @@ def run_extract(json_dir: Path, pickle_path: Path) -> None:
             conversation_id = file.stem
             messages = extract_messages(conversation)
 
+            kept = 0
             for msg in messages:
                 msg["conversation_id"] = conversation_id
                 h = text_hash(msg["text"])
@@ -60,8 +61,8 @@ def run_extract(json_dir: Path, pickle_path: Path) -> None:
                     continue
                 seen_hashes.add(h)
                 all_messages.append(msg)
+                kept += 1
 
-            kept = sum(1 for m in messages if text_hash(m["text"]) not in seen_hashes)
             print(
                 f"  {file.name}: {len(messages)} messages ({len(messages) - kept} deduped)"
             )

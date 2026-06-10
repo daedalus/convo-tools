@@ -15,12 +15,8 @@ TOP_KEYWORDS_PER_MESSAGE = 5
 def build_graph(
     all_messages: list[dict[str, Any]],
     debug: bool = False,
-    limit: int = 0,
+    known_message_ids: set[str] | None = None,
 ) -> dict[str, Any]:
-    if limit:
-        all_messages = all_messages[:limit]
-        print(f"Limited to {limit} messages")
-
     import spacy  # noqa: PLC0415
 
     nlp = spacy.load(
@@ -35,6 +31,7 @@ def build_graph(
     edges_mentions: set[tuple[str, str]] = set()
     edges_cooc: set[tuple[str, str]] = set()
     edges_keywords: list[tuple[str, str, float]] = []
+    known_ids: set[str] = known_message_ids or set()
     gc.collect()
 
     # ── Add conversation + message nodes/edges ──
@@ -51,7 +48,7 @@ def build_graph(
                 "text": msg["text"][:1000],
             }
             edges_contains.add((conv_id, msg["id"]))
-            if msg["parent"] and msg["parent"] in nodes:
+            if msg["parent"] and (msg["parent"] in nodes or msg["parent"] in known_ids):
                 edges_replies_to.add((msg["parent"], msg["id"]))
 
     total_edges = len(edges_contains) + len(edges_replies_to)
@@ -216,7 +213,7 @@ def run_graph(
         new_messages = new_messages[:limit]
         print(f"Limited to {limit} messages (offset={offset}, total_new={total_new})")
 
-    graph_data = build_graph(new_messages, debug=debug, limit=0)
+    graph_data = build_graph(new_messages, debug=debug, known_message_ids=processed_ids)
 
     if existing_graph:
         graph_data["nodes"] = {**existing_graph["nodes"], **graph_data["nodes"]}

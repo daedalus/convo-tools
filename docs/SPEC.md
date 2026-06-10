@@ -7,6 +7,10 @@ Conversations are loaded from JSON files, deduplicated by SHA-256 content hash, 
 stored as a pickle. The pickle is then processed with spaCy NER and TF-IDF to produce
 a knowledge graph stored as plain Python dicts/sets for compact memory usage.
 
+Also supports joining conversation files from multiple providers (OpenAI, Anthropic,
+DeepSeek, Gemini) into a single normalized format, and splitting normalized files back
+into individual conversation files.
+
 ## Scope
 
 ### In scope
@@ -26,16 +30,17 @@ a knowledge graph stored as plain Python dicts/sets for compact memory usage.
   - `CO_OCCURS_WITH` edges (entity ↔ entity, undirected, deduplicated)
   - `HAS_KEYWORD` edges (message → keyword, with TF-IDF weight)
 - Export the graph data structure as a pickle file (via `--pickle` flag).
+- Incremental graph updates: load existing `knowledge_graph.pkl`, process only new messages.
 - Print per-message entity extractions (via `--debug` flag).
-- Limit messages processed (via `--limit=N` flag).
+- Limit/paginate messages processed (via `--limit=N` and `--offset=N` flags).
 - Report RSS memory at each phase.
+- Join conversations from multiple providers/formats into a single normalized JSON.
+- Split a conversations JSON into individual conversation files.
 
 ### Out of scope
 
 - Web UI or visualization of the graph.
 - Graph querying or traversal beyond construction.
-- Support for non-ChatGPT conversation formats.
-- Streaming or incremental graph updates.
 - Distributed processing.
 
 ## Public API / Interface
@@ -51,8 +56,10 @@ convo-tools -m <mode> [args...]
 | Mode | Args | Description |
 |------|------|-------------|
 | `extract` | `<json_dir> [pickle_path]` | Read JSONs → deduped pickle |
-| `graph` | `<pickle_path> [--pickle] [--debug] [--limit N]` | Pickle → knowledge graph |
-| `full` | `<json_dir> [pickle_path]` | Extract + graph |
+| `graph` | `<pickle_path> [--pickle] [--debug] [--limit N] [--offset N]` | Pickle → knowledge graph |
+| `full` | `<json_dir> [pickle_path] [--pickle] [--debug] [--limit N] [--offset N]` | Extract + graph |
+| `join` | `-i <path> [-i ...] -f <format> [-o <file>] [--no-dedup]` | Join multi-provider files |
+| `split` | `[input_file] [-o <dir>]` | Split conversations JSON |
 
 **Options:**
 
