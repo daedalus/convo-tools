@@ -53,6 +53,10 @@ CREATE TABLE IF NOT EXISTS edge_keyword (
     PRIMARY KEY (msg_id, keyword_id)
 );
 
+CREATE TABLE IF NOT EXISTS processed_message (
+    id TEXT PRIMARY KEY
+);
+
 CREATE INDEX IF NOT EXISTS idx_node_label ON node(label);
 CREATE INDEX IF NOT EXISTS idx_node_name ON node(name);
 CREATE INDEX IF NOT EXISTS idx_node_entity_type ON node(entity_type);
@@ -280,6 +284,32 @@ class GraphDB:
     def clear_all(self) -> None:
         self.delete_all_nodes()
         self.delete_all_edges()
+
+    # ── Processed message tracking (resume-safe incremental build) ────
+
+    def mark_messages_processed(self, msg_ids: set[str]) -> None:
+        conn = self._conn()
+        conn.execute("BEGIN TRANSACTION")
+        try:
+            for mid in msg_ids:
+                conn.execute(
+                    "INSERT OR IGNORE INTO processed_message (id) VALUES (?)",
+                    (mid,),
+                )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+
+    def get_processed_message_ids(self) -> set[str]:
+        rows = self._conn().execute("SELECT id FROM processed_message").fetchall()
+        return {r["id"] for r in rows}
+
+    def get_unprocessed_message_ids(self) -> set[str]:
+        rows = self._conn().execute(
+            "SELECT id FROM node WHERE label = 'Message' AND id NOT IN (SELECT id FROM processed_message)"
+        ).fetchall()
+        return {r["id"] for r in rows}
 
     # ── Batch operations ───────────────────────────────────────────────
 

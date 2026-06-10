@@ -33,7 +33,7 @@ def build_graph_to_db(
     all_known_ids: set[str] = existing_known_ids | new_msg_ids
     gc.collect()
 
-    # ── Add conversation + message nodes/edges ──
+    # ── Add conversation + message nodes/edges (no commit yet) ──
     conv_groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for msg in all_messages:
         conv_groups[msg["conversation_id"]].append(msg)
@@ -42,28 +42,22 @@ def build_graph_to_db(
     node_count = 0
     edge_count = 0
 
-    conn.execute("BEGIN TRANSACTION")
-    try:
-        for conv_id, msgs in conv_groups.items():
-            db.upsert_node(conv_id, label="Conversation")
+    for conv_id, msgs in conv_groups.items():
+        db.upsert_node(conv_id, label="Conversation")
+        node_count += 1
+        for msg in msgs:
+            db.upsert_node(
+                msg["id"],
+                label="Message",
+                role=msg["role"],
+                text=msg["text"][:1000],
+            )
             node_count += 1
-            for msg in msgs:
-                db.upsert_node(
-                    msg["id"],
-                    label="Message",
-                    role=msg["role"],
-                    text=msg["text"][:1000],
-                )
-                node_count += 1
-                db.add_edge_contains(conv_id, msg["id"])
+            db.add_edge_contains(conv_id, msg["id"])
+            edge_count += 1
+            if msg["parent"] and msg["parent"] in all_known_ids:
+                db.add_edge_replies_to(msg["parent"], msg["id"])
                 edge_count += 1
-                if msg["parent"] and msg["parent"] in all_known_ids:
-                    db.add_edge_replies_to(msg["parent"], msg["id"])
-                    edge_count += 1
-        conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
 
     print(f"Graph: {node_count} nodes, {edge_count} edges")
     print(f"  RSS after message nodes: {_rss_mb():.0f} MB")
@@ -100,6 +94,8 @@ def build_graph_to_db(
             for chunk in chunks:
                 doc = nlp(chunk)
                 for ent in doc.ents:
+                    if ent.label_ in ("CARDINAL",):
+                        continue
                     entity_id = f"entity::{ent.label_}::{ent.text.lower()}"
                     if entity_id not in batch_nodes:
                         batch_nodes[entity_id] = {
@@ -185,6 +181,10 @@ def build_graph_to_db(
             conn.rollback()
             raise
 
+    # Mark all messages in this batch as fully processed
+    db.mark_messages_processed(new_msg_ids)
+    print(f"  Marked {len(new_msg_ids)} messages as fully processed")
+
     print(f"  RSS after TF-IDF: {_rss_mb():.0f} MB")
 
 
@@ -208,18 +208,20 @@ def run_graph(
     db = GraphDB(db_path)
     processed_ids: set[str] = set()
 
-    existing_msg_ids = {
-        r["id"]
-        for r in db._conn()
-        .execute("SELECT id FROM node WHERE label = 'Message'")
-        .fetchall()
-    }
-    if existing_msg_ids:
-        processed_ids = existing_msg_ids
+    processed_ids = db.get_processed_message_ids()
+    if processed_ids:
         print(f"Found existing graph at {db_path}")
-        print(f"  {len(processed_ids)} messages already in graph")
+        print(f"  {len(processed_ids)} messages already fully processed")
         new_messages = [m for m in all_messages if m["id"] not in processed_ids]
         print(f"  {len(new_messages)} new messages to process")
+
+        # Re-process any messages that have nodes but aren't fully processed
+        unprocessed = db.get_unprocessed_message_ids()
+        if unprocessed:
+            print(f"  {len(unprocessed)} partially processed messages will be re-processed")
+            new_unprocessed = [m for m in all_messages if m["id"] in unprocessed]
+            new_messages = list({m["id"]: m for m in new_messages + new_unprocessed}.values())
+            print(f"  {len(new_messages)} total after including partials")
     else:
         new_messages = all_messages
 

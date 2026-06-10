@@ -235,6 +235,7 @@ def test_run_graph_up_to_date(monkeypatch, tmp_path: Path, capsys) -> None:
     pre_db.upsert_node("m1", label="Message")
     pre_db.upsert_node("c1", label="Conversation")
     pre_db.add_edge_contains("c1", "m1")
+    pre_db.mark_messages_processed({"m1"})
     pre_db.close()
 
     with patch("spacy.load"):
