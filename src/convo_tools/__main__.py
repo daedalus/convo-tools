@@ -13,6 +13,7 @@ from convo_tools._join import run_join
 from convo_tools._similarity import run_similarity
 from convo_tools._split import run_split
 from convo_tools._timeline import run_timeline
+from convo_tools._topics import run_topics
 
 
 def _build_base_parser() -> argparse.ArgumentParser:
@@ -22,7 +23,7 @@ def _build_base_parser() -> argparse.ArgumentParser:
     )
     ap.add_argument(
         "-m", "--mode", required=True,
-        choices=["extract", "graph", "full", "join", "split", "export", "timeline", "centrality", "similarity", "ingest"],
+        choices=["extract", "graph", "full", "join", "split", "export", "timeline", "centrality", "similarity", "ingest", "topics"],
         help="Operation mode",
     )
     return ap
@@ -252,6 +253,30 @@ def _build_export_parser() -> argparse.ArgumentParser:
     return ap
 
 
+def _build_topics_parser() -> argparse.ArgumentParser:
+    ap = argparse.ArgumentParser(
+        prog=f"{sys.argv[0]} -m topics",
+        description="Louvain community detection on entity co-occurrence graph.",
+    )
+    ap.add_argument(
+        "pickle_path", nargs="?", type=Path, default=Path("knowledge_graph.pkl"),
+        help="Input knowledge graph pickle (default: knowledge_graph.pkl)",
+    )
+    ap.add_argument(
+        "--top", type=int, default=10,
+        help="Show top N entities per cluster (default: 10)",
+    )
+    ap.add_argument(
+        "--min-size", type=int, default=3,
+        help="Minimum entities per cluster to display (default: 3)",
+    )
+    ap.add_argument(
+        "-o", "--output", type=Path,
+        help="Output CSV file with per-entity cluster assignments",
+    )
+    return ap
+
+
 def _build_split_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(
         prog=f"{sys.argv[0]} -m split",
@@ -272,6 +297,7 @@ PARSERS = {
     "centrality": _build_centrality_parser,
     "ingest": _build_ingest_parser,
     "similarity": _build_similarity_parser,
+    "topics": _build_topics_parser,
     "export": _build_export_parser,
     "extract": _build_extract_parser,
     "timeline": _build_timeline_parser,
@@ -302,6 +328,8 @@ def main() -> int:
         run_ingest(args)
     elif mode == "similarity":
         run_similarity(args)
+    elif mode == "topics":
+        run_topics(args)
     elif mode == "export":
         run_export(args)
     elif mode == "timeline":
