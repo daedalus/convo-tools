@@ -94,7 +94,7 @@ def build_graph_to_db(
             for chunk in chunks:
                 doc = nlp(chunk)
                 for ent in doc.ents:
-                    if ent.label_ in ("CARDINAL",):
+                    if ent.label_ in ("CARDINAL", "DATE", "TIME", "MONEY", "PERCENT", "QUANTITY", "ORDINAL"):
                         continue
                     entity_id = f"entity::{ent.label_}::{ent.text.lower()}"
                     if entity_id not in batch_nodes:
