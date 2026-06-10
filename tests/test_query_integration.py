@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from convo_tools._graph_db import GraphDB
 from convo_tools._query import (
     _build_llm_context,
     _call_llm,
@@ -18,52 +19,74 @@ from convo_tools._query import (
 )
 
 
-def test_entity_name_non_dict() -> None:
-    nodes = {"foo::bar::hello": "not_a_dict"}
-    assert _entity_name(nodes, "foo::bar::hello") == "hello"
+def test_entity_name_non_dict(tmp_path: Path) -> None:
+    db_path = tmp_path / "test.db"
+    db = GraphDB(db_path)
+    result = _entity_name(db, "foo::bar::hello")
+    assert result == "hello"
+    db.close()
 
 
-def test_entity_name_dict() -> None:
-    nodes = {"foo::bar::hello": {"name": "override"}}
-    assert _entity_name(nodes, "foo::bar::hello") == "override"
+def test_entity_name_dict(tmp_path: Path) -> None:
+    db_path = tmp_path / "test.db"
+    db = GraphDB(db_path)
+    db.upsert_node("foo::bar::hello", label="Entity", name="override")
+    result = _entity_name(db, "foo::bar::hello")
+    assert result == "override"
+    db.close()
 
 
-def test_entity_name_missing() -> None:
-    assert _entity_name({}, "nonexistent") == "nonexistent"
+def test_entity_name_missing(tmp_path: Path) -> None:
+    db_path = tmp_path / "test.db"
+    db = GraphDB(db_path)
+    assert _entity_name(db, "nonexistent") == "nonexistent"
+    db.close()
 
 
-def test_msg_text_non_dict() -> None:
-    nodes = {"msg::1": "not_a_dict"}
-    assert _msg_text(nodes, "msg::1") == ""
+def test_msg_text_non_dict(tmp_path: Path) -> None:
+    db_path = tmp_path / "test.db"
+    db = GraphDB(db_path)
+    assert _msg_text(db, "msg::1") == ""
+    db.close()
 
 
-def test_msg_role_non_dict() -> None:
-    nodes = {"msg::1": "not_a_dict"}
-    assert _msg_role(nodes, "msg::1") == "?"
+def test_msg_role_non_dict(tmp_path: Path) -> None:
+    db_path = tmp_path / "test.db"
+    db = GraphDB(db_path)
+    assert _msg_role(db, "msg::1") == "?"
+    db.close()
 
 
-def test_msg_text_missing() -> None:
-    assert _msg_text({}, "msg::x") == ""
+def test_msg_text_missing(tmp_path: Path) -> None:
+    db_path = tmp_path / "test.db"
+    db = GraphDB(db_path)
+    assert _msg_text(db, "msg::x") == ""
+    db.close()
 
 
 def test_search_entities_match_name(tmp_path: Path) -> None:
-    nodes = {
-        "entity::PERSON::alice": {"label": "Entity", "name": "Alice", "entity_type": "PERSON"},
-    }
-    edges_mentions = {("msg::1", "entity::PERSON::alice")}
-    matched, msg_map = _search_entities(["alice"], nodes, edges_mentions)
+    db_path = tmp_path / "test.db"
+    db = GraphDB(db_path)
+    db.upsert_node("entity::PERSON::alice", label="Entity", name="Alice", entity_type="PERSON")
+    db.upsert_node("msg::1", label="Message")
+    db.add_edge_mentions("msg::1", "entity::PERSON::alice")
+    edges_mentions = db.get_edges_mentions()
+    matched, msg_map = _search_entities(["alice"], db, edges_mentions)
     assert "entity::PERSON::alice" in matched
     assert msg_map["entity::PERSON::alice"] == {"msg::1"}
+    db.close()
 
 
 def test_search_entities_name_fallback_split(tmp_path: Path) -> None:
-    """When node has no 'name' key, entity name falls back to last :: segment."""
-    nodes = {
-        "entity::PERSON::alice-smith": {"label": "Entity"},
-    }
-    edges_mentions = {("msg::1", "entity::PERSON::alice-smith")}
-    matched, _ = _search_entities(["alice"], nodes, edges_mentions)
+    db_path = tmp_path / "test.db"
+    db = GraphDB(db_path)
+    db.upsert_node("entity::PERSON::alice-smith", label="Entity")
+    db.upsert_node("msg::1", label="Message")
+    db.add_edge_mentions("msg::1", "entity::PERSON::alice-smith")
+    edges_mentions = db.get_edges_mentions()
+    matched, _ = _search_entities(["alice"], db, edges_mentions)
     assert "entity::PERSON::alice-smith" in matched
+    db.close()
 
 
 def _empty_messages(tmp_path: Path) -> Path:
@@ -82,12 +105,13 @@ def test_query_entity_match(tmp_path: Path, capsys) -> None:
         "edges_mentions": {("msg::1", "entity::PERSON::alice")},
         "edges_replies_to": set(), "edges_cooc": set(), "edges_keywords": [],
     }
-    pkl_g = tmp_path / "graph.pkl"
-    with open(pkl_g, "wb") as f:
-        pickle.dump(g, f)
+    db_path = tmp_path / "test.db"
+    db = GraphDB(db_path)
+    db.add_graph_batch(g)
+    db.close()
 
-    args = argparse.Namespace(query="alice", graph=pkl_g, messages=_empty_messages(tmp_path), llm=False, top=10, max_context=50000, output=None)
-    run_query(args)
+    args = argparse.Namespace(query="alice", messages=_empty_messages(tmp_path), llm=False, top=10, max_context=50000, output=None)
+    run_query(db_path, args)
     out = capsys.readouterr().out
     assert "alice" in out.lower()
 
@@ -98,13 +122,14 @@ def test_query_no_results(tmp_path: Path, capsys) -> None:
         "edges_contains": set(), "edges_mentions": set(),
         "edges_replies_to": set(), "edges_cooc": set(), "edges_keywords": [],
     }
-    pkl_g = tmp_path / "graph.pkl"
-    with open(pkl_g, "wb") as f:
-        pickle.dump(g, f)
+    db_path = tmp_path / "test.db"
+    db = GraphDB(db_path)
+    db.add_graph_batch(g)
+    db.close()
 
     pkl_m = _empty_messages(tmp_path)
-    args = argparse.Namespace(query="nonexistent", graph=pkl_g, messages=pkl_m, llm=False, top=10, max_context=50000, output=None)
-    run_query(args)
+    args = argparse.Namespace(query="nonexistent", messages=pkl_m, llm=False, top=10, max_context=50000, output=None)
+    run_query(db_path, args)
     out = capsys.readouterr().out
     assert "No matching" in out
 
@@ -112,25 +137,26 @@ def test_query_no_results(tmp_path: Path, capsys) -> None:
 def test_query_empty_query(tmp_path: Path, capsys) -> None:
     g = {"nodes": {}, "edges_contains": set(), "edges_mentions": set(),
          "edges_replies_to": set(), "edges_cooc": set(), "edges_keywords": []}
-    pkl_g = tmp_path / "graph.pkl"
-    with open(pkl_g, "wb") as f:
-        pickle.dump(g, f)
+    db_path = tmp_path / "test.db"
+    db = GraphDB(db_path)
+    db.add_graph_batch(g)
+    db.close()
 
     pkl_m = _empty_messages(tmp_path)
-    args = argparse.Namespace(query="", graph=pkl_g, messages=pkl_m, llm=False, top=10, max_context=50000, output=None)
-    run_query(args)
+    args = argparse.Namespace(query="", messages=pkl_m, llm=False, top=10, max_context=50000, output=None)
+    run_query(db_path, args)
     assert "no query" in capsys.readouterr().err
 
 
 def test_query_malformed_graph(tmp_path: Path, capsys) -> None:
-    pkl_g = tmp_path / "graph.pkl"
-    with open(pkl_g, "wb") as f:
-        pickle.dump("not_a_dict", f)
+    db_path = tmp_path / "test.db"
+    db = GraphDB(db_path)
+    db.close()
 
     pkl_m = _empty_messages(tmp_path)
-    args = argparse.Namespace(query="test", graph=pkl_g, messages=pkl_m, llm=False, top=10, max_context=50000, output=None)
-    run_query(args)
-    assert "Error" in capsys.readouterr().err
+    args = argparse.Namespace(query="test", messages=pkl_m, llm=False, top=10, max_context=50000, output=None)
+    run_query(db_path, args)
+    assert "No matching" in capsys.readouterr().out
 
 
 def test_build_llm_context() -> None:
@@ -186,12 +212,13 @@ def test_query_keyword_matching(tmp_path: Path, capsys) -> None:
         "edges_replies_to": set(), "edges_cooc": set(),
         "edges_keywords": [("msg::1", "kw::sequence", 0.85)],
     }
-    pkl_g = tmp_path / "graph.pkl"
-    with open(pkl_g, "wb") as f:
-        pickle.dump(g, f)
+    db_path = tmp_path / "test.db"
+    db = GraphDB(db_path)
+    db.add_graph_batch(g)
+    db.close()
 
-    args = argparse.Namespace(query="sequ", graph=pkl_g, messages=_empty_messages(tmp_path), llm=False, top=10, max_context=50000, output=None)
-    run_query(args)
+    args = argparse.Namespace(query="sequ", messages=_empty_messages(tmp_path), llm=False, top=10, max_context=50000, output=None)
+    run_query(db_path, args)
     out = capsys.readouterr().out
     assert "sequence" in out or "msg::1" in out
 
@@ -205,16 +232,18 @@ def test_query_llm_mode(tmp_path: Path, capsys) -> None:
         "edges_mentions": {("msg::1", "entity::PERSON::alice")},
         "edges_replies_to": set(), "edges_cooc": set(), "edges_keywords": [],
     }
-    pkl_g = tmp_path / "graph.pkl"
-    with open(pkl_g, "wb") as f:
-        pickle.dump(g, f)
+    db_path = tmp_path / "test.db"
+    db = GraphDB(db_path)
+    db.add_graph_batch(g)
+    db.close()
+
     pkl_m = tmp_path / "messages.pkl"
     with open(pkl_m, "wb") as f:
         pickle.dump([{"id": "msg::1", "conversation_id": "conv::c1", "role": "user", "text": "About Alice", "create_time": 1000.0}], f)
 
     with patch("convo_tools._query._call_llm", return_value="Alice is a person"):
-        args = argparse.Namespace(query="alice", graph=pkl_g, messages=pkl_m, llm=True, top=10, max_context=50000, output=None)
-        run_query(args)
+        args = argparse.Namespace(query="alice", messages=pkl_m, llm=True, top=10, max_context=50000, output=None)
+        run_query(db_path, args)
 
     out = capsys.readouterr().out
     assert "Alice" in out
@@ -230,13 +259,15 @@ def test_query_csv_output(tmp_path: Path) -> None:
         "edges_mentions": {("msg::1", "entity::PERSON::alice")},
         "edges_replies_to": set(), "edges_cooc": set(), "edges_keywords": [],
     }
-    pkl_g = tmp_path / "graph.pkl"
-    with open(pkl_g, "wb") as f:
-        pickle.dump(g, f)
+    db_path = tmp_path / "test.db"
+    db = GraphDB(db_path)
+    db.add_graph_batch(g)
+    db.close()
+
     out_csv = tmp_path / "out.csv"
 
-    args = argparse.Namespace(query="alice", graph=pkl_g, messages=_empty_messages(tmp_path), llm=False, top=10, max_context=50000, output=out_csv)
-    run_query(args)
+    args = argparse.Namespace(query="alice", messages=_empty_messages(tmp_path), llm=False, top=10, max_context=50000, output=out_csv)
+    run_query(db_path, args)
     assert out_csv.exists()
     csv_content = out_csv.read_text()
     assert "msg::1" in csv_content

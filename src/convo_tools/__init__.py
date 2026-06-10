@@ -2,7 +2,7 @@ from __future__ import annotations
 
 __version__ = "0.1.0"
 
-from convo_tools._builder import build_graph
+from convo_tools._builder import build_graph_to_db as build_graph
 from convo_tools._centrality import run_centrality
 from convo_tools._depth import run_depth
 from convo_tools._diff import run_diff

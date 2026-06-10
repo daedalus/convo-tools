@@ -4,6 +4,7 @@ import argparse
 import pickle
 from pathlib import Path
 
+from convo_tools._graph_db import GraphDB
 from convo_tools._similarity import run_similarity
 
 
@@ -43,30 +44,34 @@ def _messages() -> list[dict]:
 
 
 def test_similarity_basic(tmp_path: Path, capsys) -> None:
-    pkl_g = tmp_path / "graph.pkl"
+    db_path = tmp_path / "test.db"
+    db = GraphDB(db_path)
+    db.add_graph_batch(_graph())
+    db.close()
+
     pkl_m = tmp_path / "messages.pkl"
-    with open(pkl_g, "wb") as f:
-        pickle.dump(_graph(), f)
     with open(pkl_m, "wb") as f:
         pickle.dump(_messages(), f)
 
-    args = argparse.Namespace(graph=pkl_g, messages=pkl_m, top=20, threshold=0.0, all=False, output=None)
-    run_similarity(args)
+    args = argparse.Namespace(messages=pkl_m, top=20, threshold=0.0, all=False, output=None)
+    run_similarity(db_path, args)
     out = capsys.readouterr().out
     assert "Jaccard" in out
 
 
 def test_similarity_csv(tmp_path: Path) -> None:
-    pkl_g = tmp_path / "graph.pkl"
+    db_path = tmp_path / "test.db"
+    db = GraphDB(db_path)
+    db.add_graph_batch(_graph())
+    db.close()
+
     pkl_m = tmp_path / "messages.pkl"
-    with open(pkl_g, "wb") as f:
-        pickle.dump(_graph(), f)
     with open(pkl_m, "wb") as f:
         pickle.dump(_messages(), f)
     out_csv = tmp_path / "out.csv"
 
-    args = argparse.Namespace(graph=pkl_g, messages=pkl_m, top=20, threshold=0.0, all=True, output=out_csv)
-    run_similarity(args)
+    args = argparse.Namespace(messages=pkl_m, top=20, threshold=0.0, all=True, output=out_csv)
+    run_similarity(db_path, args)
     assert out_csv.exists()
 
 
@@ -77,13 +82,15 @@ def test_similarity_no_pairs(tmp_path: Path, capsys) -> None:
         "edges_contains": {("conv::a", "msg::a1")},
         "edges_replies_to": set(), "edges_cooc": set(), "edges_keywords": [],
     }
-    pkl_g = tmp_path / "graph.pkl"
+    db_path = tmp_path / "test.db"
+    db = GraphDB(db_path)
+    db.add_graph_batch(g)
+    db.close()
+
     pkl_m = tmp_path / "messages.pkl"
-    with open(pkl_g, "wb") as f:
-        pickle.dump(g, f)
     with open(pkl_m, "wb") as f:
         pickle.dump([{"id": "msg::a1", "conversation_id": "conv::a", "role": "user", "text": "Hi"}], f)
 
-    args = argparse.Namespace(graph=pkl_g, messages=pkl_m, top=20, threshold=0.5, all=False, output=None)
-    run_similarity(args)
+    args = argparse.Namespace(messages=pkl_m, top=20, threshold=0.5, all=False, output=None)
+    run_similarity(db_path, args)
     assert "No similar" in capsys.readouterr().out

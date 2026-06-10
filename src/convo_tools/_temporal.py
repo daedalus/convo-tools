@@ -2,15 +2,17 @@ from __future__ import annotations
 
 import csv
 import math
-import pickle
 import sys
 from collections import Counter, defaultdict
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     import argparse
     from typing import Any
+
+from convo_tools._graph_db import GraphDB
 
 
 def _time_bucket(ts: float | None, window_days: int) -> str:
@@ -29,23 +31,20 @@ def _time_bucket(ts: float | None, window_days: int) -> str:
     return dt.strftime("%Y-%m-%d")
 
 
-def _entity_name(nodes: dict[str, Any], eid: str) -> str:
-    n = nodes.get(eid, {})
-    if isinstance(n, dict):
+def _entity_name(db: GraphDB, eid: str) -> str:
+    n = db.get_node(eid)
+    if n is not None:
         name = n.get("name")
         return str(name)[:40] if name else eid.split("::", 2)[-1][:40]
     return eid[:40]
 
 
-def run_temporal(args: argparse.Namespace) -> None:
-    with open(args.graph, "rb") as f:
-        graph = pickle.load(f)
-    with open(args.messages, "rb") as f:
-        messages: list[dict[str, Any]] = pickle.load(f)
+def run_temporal(db_path: str | Path, args: argparse.Namespace) -> None:
+    db = GraphDB(db_path)
 
-    if not isinstance(graph, dict) or "nodes" not in graph:
-        print("Error: graph pickle missing 'nodes' key", file=sys.stderr)
-        return
+    with open(args.messages, "rb") as f:
+        import pickle
+        messages: list[dict[str, Any]] = pickle.load(f)
 
     msg_timestamps: dict[str, float | None] = {}
     for m in messages:
@@ -56,11 +55,10 @@ def run_temporal(args: argparse.Namespace) -> None:
         print("No real timestamps found in messages pickle (all create_time are None).")
         print("Using message index as pseudo-time (relative ordering only).")
         for i, m in enumerate(messages):
-            msg_timestamps[m["id"]] = float(i * 86400)  # 1 day apart
+            msg_timestamps[m["id"]] = float(i * 86400)
         has_ts = len(messages)
 
-    nodes = graph.get("nodes", {})
-    edges_mentions = graph.get("edges_mentions", set())
+    edges_mentions = db.get_edges_mentions()
 
     #── Bucket entity mentions ──
     window = args.window
@@ -74,6 +72,7 @@ def run_temporal(args: argparse.Namespace) -> None:
     sorted_buckets = sorted(b for b in bucket_ents if b != "unknown")
     if not sorted_buckets:
         print("No timestamped entity mentions found.")
+        db.close()
         return
 
     print(f"  Timespan: {sorted_buckets[0]} — {sorted_buckets[-1]} ({len(sorted_buckets)} buckets, {window}-day windows)")
@@ -140,7 +139,7 @@ def run_temporal(args: argparse.Namespace) -> None:
 
     sorted_by_total = sorted(entity_metrics.items(), key=lambda x: -x[1]["total"])
     for eid, m in sorted_by_total[:top_n]:
-        name = _entity_name(nodes, eid)
+        name = _entity_name(db, eid)
         print(f"  {name:30s}  {m['total']:>6d}  {str(m['first'] or '?'):>12s}  {str(m['last'] or '?'):>12s}  {m['active_buckets']:>7d}  {m['bursts']:>7d}  {m['cv']:>6.3f}")
 
     #── Most bursty (highest CV, excluding low-total) ──
@@ -153,7 +152,7 @@ def run_temporal(args: argparse.Namespace) -> None:
         print(f"  {'name':30s}  {'cv':>6s}  {'total':>6s}  {'bursts':>7s}  {'active':>7s}")
         print(f"  {'─'*30}  {'─'*6}  {'─'*6}  {'─'*7}  {'─'*7}")
         for eid, m in bursty[:top_n]:
-            name = _entity_name(nodes, eid)
+            name = _entity_name(db, eid)
             print(f"  {name:30s}  {m['cv']:>6.3f}  {m['total']:>6d}  {m['bursts']:>7d}  {m['active_buckets']:>7d}")
 
     #── Entity activity timeline for top entities ──
@@ -172,7 +171,7 @@ def run_temporal(args: argparse.Namespace) -> None:
     print(header)
 
     for eid in top_entities:
-        name = _entity_name(nodes, eid)
+        name = _entity_name(db, eid)
         line = f"{name:>{name_col_width}s}  "
         max_c = max(bucket_ents[b].get(eid, 0) for b in sorted_buckets)
         for b in sorted_buckets:
@@ -204,8 +203,8 @@ def run_temporal(args: argparse.Namespace) -> None:
             print(f"  {'buckets':>7s}  {'entity1':30s}  {'entity2':30s}")
             print(f"  {'─'*7}  {'─'*30}  {'─'*30}")
             for (e1, e2), count in ranked[:args.top]:
-                n1 = _entity_name(nodes, e1)
-                n2 = _entity_name(nodes, e2)
+                n1 = _entity_name(db, e1)
+                n2 = _entity_name(db, e2)
                 pct = 100.0 * count / len(sorted_buckets)
                 print(f"  {count:>7d}  {n1:30s}  {n2:30s}  ({pct:.0f}% of buckets)")
         else:
@@ -218,7 +217,9 @@ def run_temporal(args: argparse.Namespace) -> None:
             w.writerow(["entity_id", "name", "total_mentions", "first_bucket", "last_bucket",
                        "active_buckets", "burst_count", "cv"])
             for eid, m in sorted_by_total:
-                w.writerow([eid, _entity_name(nodes, eid), m["total"],
+                w.writerow([eid, _entity_name(db, eid), m["total"],
                           m["first"] or "", m["last"] or "", m["active_buckets"],
                           m["bursts"], f"{m['cv']:.4f}"])
         print(f"\nWrote {args.output} ({len(sorted_by_total)} entities)")
+
+    db.close()

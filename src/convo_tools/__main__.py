@@ -60,8 +60,12 @@ def _build_graph_parser() -> argparse.ArgumentParser:
         help="Input pickle path (default: messages.pkl)",
     )
     ap.add_argument(
+        "--db", type=Path, default=_P / "knowledge_graph.db",
+        help="SQLite graph database path (default: knowledge_graph.db)",
+    )
+    ap.add_argument(
         "--pickle", action="store_true",
-        help="Export graph data as knowledge_graph.pkl",
+        help="Also export graph data as knowledge_graph.pkl (for backward compat)",
     )
     ap.add_argument(
         "--debug", action="store_true",
@@ -87,6 +91,10 @@ def _build_full_parser() -> argparse.ArgumentParser:
     ap.add_argument(
         "pickle_path", nargs="?", type=Path, default=_P / "messages.pkl",
         help="Intermediate/output pickle path (default: messages.pkl)",
+    )
+    ap.add_argument(
+        "--db", type=Path, default=_P / "knowledge_graph.db",
+        help="SQLite graph database path (default: knowledge_graph.db)",
     )
     ap.add_argument(
         "--pickle", action="store_true",
@@ -142,11 +150,16 @@ def _build_ingest_parser() -> argparse.ArgumentParser:
         description="Ingest knowledge graph into Kuzu property graph database.",
     )
     ap.add_argument(
-        "pickle_path", nargs="?", type=Path, default=_P / "knowledge_graph.pkl",
-        help="Input knowledge graph pickle (default: knowledge_graph.pkl)",
+        "--db", type=Path, default=_P / "knowledge_graph.db",
+        help="Input SQLite graph database (default: knowledge_graph.db)",
     )
     ap.add_argument(
-        "db_path", nargs="?", type=Path, default=_P / "knowledge_graph.kzu",
+        "--pickle-path", type=Path, default=None,
+        dest="pickle_path",
+        help="Input knowledge graph pickle (legacy, overrides --db)",
+    )
+    ap.add_argument(
+        "kuzu_path", nargs="?", type=Path, default=_P / "knowledge_graph.kzu",
         help="Output Kuzu database directory (default: knowledge_graph.kzu)",
     )
     ap.add_argument(
@@ -162,8 +175,9 @@ def _build_similarity_parser() -> argparse.ArgumentParser:
         description="Find similar conversations by entity/keyword Jaccard.",
     )
     ap.add_argument(
-        "graph", nargs="?", type=Path, default=_P / "knowledge_graph.pkl",
-        help="Input knowledge graph pickle (default: knowledge_graph.pkl)",
+        "--db", type=Path, default=_P / "knowledge_graph.db",
+        dest="graph_path",
+        help="Input SQLite graph database (default: knowledge_graph.db)",
     )
     ap.add_argument(
         "messages", nargs="?", type=Path, default=_P / "messages.pkl",
@@ -194,8 +208,9 @@ def _build_centrality_parser() -> argparse.ArgumentParser:
         description="Find bridge entities via betweenness centrality.",
     )
     ap.add_argument(
-        "pickle_path", nargs="?", type=Path, default=_P / "knowledge_graph.pkl",
-        help="Input knowledge graph pickle (default: knowledge_graph.pkl)",
+        "--db", type=Path, default=_P / "knowledge_graph.db",
+        dest="graph_path",
+        help="Input SQLite graph database (default: knowledge_graph.db)",
     )
     ap.add_argument(
         "--top", type=int, default=20,
@@ -223,8 +238,9 @@ def _build_timeline_parser() -> argparse.ArgumentParser:
         description="Entity frequency over time.",
     )
     ap.add_argument(
-        "graph", nargs="?", type=Path, default=_P / "knowledge_graph.pkl",
-        help="Input knowledge graph pickle (default: knowledge_graph.pkl)",
+        "--db", type=Path, default=_P / "knowledge_graph.db",
+        dest="graph_path",
+        help="Input SQLite graph database (default: knowledge_graph.db)",
     )
     ap.add_argument(
         "messages", nargs="?", type=Path, default=_P / "messages.pkl",
@@ -251,8 +267,9 @@ def _build_export_parser() -> argparse.ArgumentParser:
         description="Export knowledge graph to GEXF (Gephi).",
     )
     ap.add_argument(
-        "pickle_path", nargs="?", type=Path, default=_P / "knowledge_graph.pkl",
-        help="Input knowledge graph pickle (default: knowledge_graph.pkl)",
+        "--db", type=Path, default=_P / "knowledge_graph.db",
+        dest="graph_path",
+        help="Input SQLite graph database (default: knowledge_graph.db)",
     )
     ap.add_argument(
         "-o", "--output", type=Path, default=_P / "knowledge_graph.gexf",
@@ -267,8 +284,9 @@ def _build_topics_parser() -> argparse.ArgumentParser:
         description="Louvain community detection on entity co-occurrence graph.",
     )
     ap.add_argument(
-        "pickle_path", nargs="?", type=Path, default=_P / "knowledge_graph.pkl",
-        help="Input knowledge graph pickle (default: knowledge_graph.pkl)",
+        "--db", type=Path, default=_P / "knowledge_graph.db",
+        dest="graph_path",
+        help="Input SQLite graph database (default: knowledge_graph.db)",
     )
     ap.add_argument(
         "--top", type=int, default=10,
@@ -377,8 +395,9 @@ def _build_depth_parser() -> argparse.ArgumentParser:
         description="Analyze reply-chain depth and branching in conversation DAGs.",
     )
     ap.add_argument(
-        "pickle_path", nargs="?", type=Path, default=_P / "knowledge_graph.pkl",
-        help="Input knowledge graph pickle (default: knowledge_graph.pkl)",
+        "--db", type=Path, default=_P / "knowledge_graph.db",
+        dest="graph_path",
+        help="Input SQLite graph database (default: knowledge_graph.db)",
     )
     ap.add_argument(
         "--top", type=int, default=20,
@@ -397,8 +416,9 @@ def _build_temporal_parser() -> argparse.ArgumentParser:
         description="Temporal analysis of entity activity: lifespans, bursts, co-activation.",
     )
     ap.add_argument(
-        "graph", nargs="?", type=Path, default=_P / "knowledge_graph.pkl",
-        help="Input knowledge graph pickle (default: knowledge_graph.pkl)",
+        "--db", type=Path, default=_P / "knowledge_graph.db",
+        dest="graph_path",
+        help="Input SQLite graph database (default: knowledge_graph.db)",
     )
     ap.add_argument(
         "messages", nargs="?", type=Path, default=_P / "messages.pkl",
@@ -433,8 +453,9 @@ def _build_query_parser() -> argparse.ArgumentParser:
         help="Natural language query (e.g. 'What did I conclude about HNSW early termination?')",
     )
     ap.add_argument(
-        "graph", nargs="?", type=Path, default=_P / "knowledge_graph.pkl",
-        help="Input knowledge graph pickle (default: knowledge_graph.pkl)",
+        "--db", type=Path, default=_P / "knowledge_graph.db",
+        dest="graph_path",
+        help="Input SQLite graph database (default: knowledge_graph.db)",
     )
     ap.add_argument(
         "messages", nargs="?", type=Path, default=_P / "messages.pkl",
@@ -465,8 +486,9 @@ def _build_serve_parser() -> argparse.ArgumentParser:
         description="Run the MCP server for LLM-powered knowledge graph querying.",
     )
     ap.add_argument(
-        "graph_path", nargs="?", type=Path, default=_P / "knowledge_graph.pkl",
-        help="Input knowledge graph pickle (default: knowledge_graph.pkl)",
+        "--db", type=Path, default=_P / "knowledge_graph.db",
+        dest="graph_path",
+        help="Input SQLite graph database (default: knowledge_graph.db)",
     )
     ap.add_argument(
         "--messages", type=Path, default=_P / "messages.pkl",
@@ -511,9 +533,9 @@ def main() -> int:
     args = PARSERS[mode]().parse_args(remaining)
 
     if mode == "centrality":
-        run_centrality(args)
+        run_centrality(args.graph_path, args)
     elif mode == "depth":
-        run_depth(args)
+        run_depth(args.graph_path, args)
     elif mode == "diff":
         run_diff(args)
     elif mode == "embed":
@@ -521,22 +543,19 @@ def main() -> int:
     elif mode == "ingest":
         run_ingest(args)
     elif mode == "query":
-        run_query(args)
+        run_query(args.graph_path, args)
     elif mode == "similarity":
-        run_similarity(args)
+        run_similarity(args.graph_path, args)
     elif mode == "temporal":
-        run_temporal(args)
+        run_temporal(args.graph_path, args)
     elif mode == "topics":
-        run_topics(args)
+        run_topics(args.graph_path, args)
     elif mode == "export":
-        run_export(args)
+        run_export(args.graph_path, args)
     elif mode == "timeline":
-        run_timeline(args)
+        run_timeline(args.graph_path, args)
     elif mode == "serve":
-        run_serve(
-            str(args.graph_path) if args.graph_path else None,
-            str(args.messages) if args.messages else None,
-        )
+        run_serve(str(args.graph_path) if args.graph_path else None)
     elif mode == "join":
         run_join(args)
     elif mode == "split":
@@ -546,6 +565,7 @@ def main() -> int:
     elif mode == "graph":
         run_graph(
             args.pickle_path,
+            db_path=args.db,
             export_pickle=args.pickle,
             debug=args.debug,
             limit=args.limit,
@@ -555,6 +575,7 @@ def main() -> int:
         run_extract(args.json_dir, args.pickle_path)
         run_graph(
             args.pickle_path,
+            db_path=args.db,
             export_pickle=args.pickle,
             debug=args.debug,
             limit=args.limit,

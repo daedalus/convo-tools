@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-import pickle
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
 from convo_tools._export import run_export
+from convo_tools._graph_db import GraphDB
 
 
 def _graph() -> dict:
@@ -22,13 +22,18 @@ def _graph() -> dict:
     }
 
 
+def _db_factory(data: dict, db_path: Path) -> GraphDB:
+    db = GraphDB(db_path)
+    db.add_graph_batch(data)
+    return db
+
+
 def test_run_export_basic(tmp_path: Path) -> None:
-    pkl = tmp_path / "graph.pkl"
-    with open(pkl, "wb") as f:
-        pickle.dump(_graph(), f)
+    db_path = tmp_path / "test.db"
+    _db_factory(_graph(), db_path)
     out = tmp_path / "test.gexf"
 
-    run_export(argparse_namespace(pkl, out))
+    run_export(db_path, argparse_namespace(out))
     assert out.exists()
     content = out.read_text()
     assert "alice" in content
@@ -42,26 +47,23 @@ def test_run_export_replies_to(tmp_path: Path) -> None:
         "msg::1": {"label": "Message", "text": "hello"},
         "msg::2": {"label": "Message", "text": "reply"},
     }
-    pkl = tmp_path / "graph.pkl"
-    with open(pkl, "wb") as f:
-        pickle.dump(g, f)
+    db_path = tmp_path / "test.db"
+    _db_factory(g, db_path)
     out = tmp_path / "test.gexf"
 
-    run_export(argparse_namespace(pkl, out))
+    run_export(db_path, argparse_namespace(out))
     content = out.read_text()
     assert "REPLIES_TO" in content
 
 
-def test_run_export_malformed(tmp_path: Path, capsys) -> None:
-    pkl = tmp_path / "graph.pkl"
-    with open(pkl, "wb") as f:
-        pickle.dump("not_a_graph", f)
+def test_run_export_empty_graph(tmp_path: Path, capsys) -> None:
+    db_path = tmp_path / "empty.db"
     out = tmp_path / "test.gexf"
 
-    run_export(argparse_namespace(pkl, out))
-    assert "Error" in capsys.readouterr().out
-    assert not out.exists()
+    run_export(db_path, argparse_namespace(out))
+    content = out.read_text()
+    assert "<node>" not in content
 
 
-def argparse_namespace(pkl: Path, out: Path):
-    return type("Args", (), {"pickle_path": pkl, "output": out})()
+def argparse_namespace(out: Path):
+    return type("Args", (), {"output": out})()

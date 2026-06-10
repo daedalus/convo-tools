@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import math
-import pickle
 import re
 from collections import Counter, defaultdict
 from datetime import UTC, datetime
@@ -9,6 +8,8 @@ from pathlib import Path
 from typing import Any
 
 import networkx as nx
+
+from convo_tools._graph_db import GraphDB
 
 try:
     from mcp.server.fastmcp import FastMCP
@@ -18,41 +19,24 @@ except ImportError:
 
 P = Path.home() / ".convo-tools"
 
-_graph: dict[str, Any] | None = None
-_GRAPH_PATH: Path = P / "knowledge_graph.pkl"
-_messages: list[dict[str, Any]] | None = None
-_MESSAGES_PATH: Path = P / "messages.pkl"
+_graph: GraphDB | None = None
+_GRAPH_PATH: Path = P / "knowledge_graph.db"
 
 
-def _load_graph() -> dict[str, Any]:
+def _load_graph() -> GraphDB:
     global _graph
     if _graph is None:
         if not _GRAPH_PATH.exists():
             raise FileNotFoundError(
-                f"Graph pickle not found: {_GRAPH_PATH}. "
-                "Run: convo-tools -m graph messages.pkl --pickle"
+                f"Graph DB not found: {_GRAPH_PATH}. "
+                "Run: convo-tools -m graph messages.pkl"
             )
-        with open(_GRAPH_PATH, "rb") as f:
-            _graph = pickle.load(f)
+        _graph = GraphDB(_GRAPH_PATH)
     return _graph
 
 
-def _g() -> dict[str, Any]:
+def _g() -> GraphDB:
     return _load_graph()
-
-
-def _load_messages() -> list[dict[str, Any]]:
-    global _messages
-    if _messages is None:
-        if not _MESSAGES_PATH.exists():
-            return []
-        with open(_MESSAGES_PATH, "rb") as f:
-            _messages = pickle.load(f)
-    return _messages
-
-
-def _m() -> list[dict[str, Any]]:
-    return _load_messages()
 
 
 mcp = FastMCP(
@@ -70,35 +54,7 @@ mcp = FastMCP(
 @mcp.tool()
 def graph_stats() -> dict[str, Any]:
     """Return high-level statistics about the knowledge graph."""
-    g = _g()
-    nodes = g["nodes"]
-
-    label_counts: Counter[str] = Counter()
-    entity_type_counts: Counter[str] = Counter()
-    role_counts: Counter[str] = Counter()
-    for node_id, attrs in nodes.items():
-        label = attrs.get("label", "unknown")
-        label_counts[label] += 1
-        if label == "Entity":
-            entity_type_counts[attrs.get("entity_type", "?")] += 1
-        if label == "Message":
-            role_counts[attrs.get("role", "?")] += 1
-
-    return {
-        "nodes": {
-            "total": len(nodes),
-            "by_label": dict(label_counts),
-            "entity_types": dict(entity_type_counts.most_common(20)),
-            "message_roles": dict(role_counts),
-        },
-        "edges": {
-            "CONTAINS": len(g["edges_contains"]),
-            "REPLIES_TO": len(g["edges_replies_to"]),
-            "MENTIONS": len(g["edges_mentions"]),
-            "CO_OCCURS_WITH": len(g["edges_cooc"]),
-            "HAS_KEYWORD": len(g["edges_keywords"]),
-        },
-    }
+    return _g().graph_stats()
 
 
 @mcp.tool()
@@ -120,28 +76,22 @@ def search_entities(
     Returns:
         List of matching entity dicts with id, name, entity_type, mention_count.
     """
-    g = _g()
-    nodes = g["nodes"]
-    edges_mentions: set[tuple[str, str]] = g["edges_mentions"]
-
-    mention_counts: Counter[str] = Counter(eid for _, eid in edges_mentions)
-
+    db = _g()
+    mention_counts = db.get_entity_mention_counts()
     q = query.lower()
     results = []
-    for node_id, attrs in nodes.items():
-        if attrs.get("label") != "Entity":
-            continue
-        name = attrs.get("name", "")
-        etype = attrs.get("entity_type", "")
+    for node in db.get_all_nodes_by_label("Entity"):
+        name = node.get("name", "")
+        etype = node.get("entity_type", "")
         if q not in name:
             continue
         if entity_type and etype != entity_type.upper():
             continue
         results.append({
-            "id": node_id,
+            "id": node["id"],
             "name": name,
             "entity_type": etype,
-            "mention_count": mention_counts.get(node_id, 0),
+            "mention_count": mention_counts.get(node["id"], 0),
         })
 
     results.sort(key=lambda x: -x["mention_count"])
@@ -163,30 +113,19 @@ def search_keywords(
     Returns:
         List of matching keyword dicts with id, name, message_count, avg_tfidf.
     """
-    g = _g()
-    nodes = g["nodes"]
-    edges_keywords: list[tuple[str, str, float]] = g["edges_keywords"]
-
-    kw_stats: dict[str, dict[str, Any]] = defaultdict(
-        lambda: {"count": 0, "total_score": 0.0}
-    )
-    for _msg_id, kw_id, score in edges_keywords:
-        kw_stats[kw_id]["count"] += 1
-        kw_stats[kw_id]["total_score"] += score
-
+    db = _g()
+    kw_stats = db.get_keyword_stats()
     q = query.lower()
     results = []
-    for node_id, attrs in nodes.items():
-        if attrs.get("label") != "Keyword":
-            continue
-        name = attrs.get("name", "")
+    for node in db.get_all_nodes_by_label("Keyword"):
+        name = node.get("name", "")
         if q not in name:
             continue
-        stats = kw_stats.get(node_id, {"count": 0, "total_score": 0.0})
+        stats = kw_stats.get(node["id"], {"count": 0, "total_score": 0.0})
         count = stats["count"]
         avg = stats["total_score"] / count if count else 0.0
         results.append({
-            "id": node_id,
+            "id": node["id"],
             "name": name,
             "message_count": count,
             "avg_tfidf": round(avg, 4),
@@ -211,21 +150,16 @@ def get_entity_messages(
     Returns:
         List of message dicts with id, role, text_preview, conversation_id.
     """
-    g = _g()
-    nodes = g["nodes"]
-    edges_mentions: set[tuple[str, str]] = g["edges_mentions"]
-    edges_contains: set[tuple[str, str]] = g["edges_contains"]
-
-    if entity_id not in nodes:
+    db = _g()
+    if not db.node_exists(entity_id):
         return [{"error": f"entity not found: {entity_id}"}]
 
-    msg_to_conv: dict[str, str] = {mid: cid for cid, mid in edges_contains}
-
+    msg_to_conv = db.get_msg_to_conv_map()
     results = []
-    for msg_id, eid in edges_mentions:
+    for msg_id, eid in db.get_edges_mentions():
         if eid != entity_id:
             continue
-        msg = nodes.get(msg_id, {})
+        msg = db.get_node(msg_id) or {}
         results.append({
             "id": msg_id,
             "role": msg.get("role", "?"),
@@ -255,26 +189,21 @@ def get_keyword_messages(
     Returns:
         List of message dicts with id, role, text_preview, tfidf_score.
     """
-    g = _g()
-    nodes = g["nodes"]
-    edges_keywords: list[tuple[str, str, float]] = g["edges_keywords"]
-    edges_contains: set[tuple[str, str]] = g["edges_contains"]
-
-    if keyword_id not in nodes:
+    db = _g()
+    if not db.node_exists(keyword_id):
         return [{"error": f"keyword not found: {keyword_id}"}]
 
-    msg_to_conv: dict[str, str] = {mid: cid for cid, mid in edges_contains}
-
+    msg_to_conv = db.get_msg_to_conv_map()
     hits = [
         (msg_id, score)
-        for msg_id, kw_id, score in edges_keywords
+        for msg_id, kw_id, score in db.get_edges_keywords()
         if kw_id == keyword_id and score >= min_tfidf
     ]
     hits.sort(key=lambda x: -x[1])
 
     results = []
     for msg_id, score in hits[:limit]:
-        msg = nodes.get(msg_id, {})
+        msg = db.get_node(msg_id) or {}
         results.append({
             "id": msg_id,
             "role": msg.get("role", "?"),
@@ -301,16 +230,16 @@ def get_conversation(
     Returns:
         Dict with conversation metadata and messages list.
     """
-    g = _g()
-    nodes = g["nodes"]
-    edges_contains: set[tuple[str, str]] = g["edges_contains"]
-    edges_replies_to: set[tuple[str, str]] = g["edges_replies_to"]
-
-    if conversation_id not in nodes:
+    db = _g()
+    conv = db.get_node(conversation_id)
+    if conv is None:
         return {"error": f"conversation not found: {conversation_id}"}
 
     if not include_messages:
-        return {"id": conversation_id, **nodes[conversation_id]}
+        return {"id": conversation_id, **conv}
+
+    edges_contains = db.get_edges_contains()
+    edges_replies_to = db.get_edges_replies_to()
 
     msg_ids = {mid for cid, mid in edges_contains if cid == conversation_id}
 
@@ -340,7 +269,7 @@ def get_conversation(
 
     messages = []
     for mid in ordered:
-        m = nodes.get(mid, {})
+        m = db.get_node(mid) or {}
         messages.append({
             "id": mid,
             "role": m.get("role", "?"),
@@ -369,30 +298,30 @@ def get_message_context(
     Returns:
         Dict with the target message, ancestors, and descendants.
     """
-    g = _g()
-    nodes = g["nodes"]
-    edges_replies_to: set[tuple[str, str]] = g["edges_replies_to"]
-    edges_contains: set[tuple[str, str]] = g["edges_contains"]
-
-    if message_id not in nodes:
+    db = _g()
+    if not db.node_exists(message_id):
         return {"error": f"message not found: {message_id}"}
+
+    edges_replies_to = db.get_edges_replies_to()
+    msg_to_conv = db.get_msg_to_conv_map()
 
     parent_map: dict[str, str] = {child: parent for parent, child in edges_replies_to}
     children_map: dict[str, list[str]] = defaultdict(list)
     for parent, child in edges_replies_to:
         children_map[parent].append(child)
 
-    msg_to_conv: dict[str, str] = {mid: cid for cid, mid in edges_contains}
-
     def _fmt(mid: str) -> dict[str, Any]:
-        m = nodes.get(mid, {})
+        m = db.get_node(mid) or {}
         return {"id": mid, "role": m.get("role", "?"), "text": m.get("text", "")}
 
     ancestors: list[dict[str, Any]] = []
     cur = message_id
     for _ in range(depth):
         p = parent_map.get(cur)
-        if not p or nodes.get(p, {}).get("label") != "Message":
+        if not p:
+            break
+        p_node = db.get_node(p)
+        if not p_node or p_node.get("label") != "Message":
             break
         ancestors.insert(0, _fmt(p))
         cur = p
@@ -430,26 +359,23 @@ def co_occurring_entities(
     Returns:
         List of co-occurring entity dicts sorted by co-occurrence frequency.
     """
-    g = _g()
-    nodes = g["nodes"]
-    edges_cooc: set[tuple[str, str]] = g["edges_cooc"]
-
-    if entity_id not in nodes:
+    db = _g()
+    if not db.node_exists(entity_id):
         return [{"error": f"entity not found: {entity_id}"}]
 
     peers = []
-    for a, b in edges_cooc:
+    for a, b in db.get_edges_cooc():
         other = None
         if a == entity_id:
             other = b
         elif b == entity_id:
             other = a
         if other:
-            attrs = nodes.get(other, {})
+            n = db.get_node(other) or {}
             peers.append({
                 "id": other,
-                "name": attrs.get("name", ""),
-                "entity_type": attrs.get("entity_type", ""),
+                "name": n.get("name", ""),
+                "entity_type": n.get("entity_type", ""),
             })
 
     return peers[:limit]
@@ -470,24 +396,19 @@ def top_entities(
     Returns:
         Ranked list of entity dicts with name, entity_type, mention_count.
     """
-    g = _g()
-    nodes = g["nodes"]
-    edges_mentions: set[tuple[str, str]] = g["edges_mentions"]
-
-    mention_counts: Counter[str] = Counter(eid for _, eid in edges_mentions)
+    db = _g()
+    mention_counts = db.get_entity_mention_counts()
 
     results = []
-    for node_id, attrs in nodes.items():
-        if attrs.get("label") != "Entity":
-            continue
-        etype = attrs.get("entity_type", "")
+    for node in db.get_all_nodes_by_label("Entity"):
+        etype = node.get("entity_type", "")
         if entity_type and etype != entity_type.upper():
             continue
         results.append({
-            "id": node_id,
-            "name": attrs.get("name", ""),
+            "id": node["id"],
+            "name": node.get("name", ""),
             "entity_type": etype,
-            "mention_count": mention_counts.get(node_id, 0),
+            "mention_count": mention_counts.get(node["id"], 0),
         })
 
     results.sort(key=lambda x: -x["mention_count"])
@@ -507,27 +428,17 @@ def top_keywords(
     Returns:
         Ranked list of keyword dicts with name, message_count, avg_tfidf.
     """
-    g = _g()
-    nodes = g["nodes"]
-    edges_keywords: list[tuple[str, str, float]] = g["edges_keywords"]
-
-    kw_stats: dict[str, dict[str, Any]] = defaultdict(
-        lambda: {"count": 0, "total_score": 0.0}
-    )
-    for _msg_id, kw_id, score in edges_keywords:
-        kw_stats[kw_id]["count"] += 1
-        kw_stats[kw_id]["total_score"] += score
+    db = _g()
+    kw_stats = db.get_keyword_stats()
 
     results = []
-    for node_id, attrs in nodes.items():
-        if attrs.get("label") != "Keyword":
-            continue
-        stats = kw_stats.get(node_id, {"count": 0, "total_score": 0.0})
+    for node in db.get_all_nodes_by_label("Keyword"):
+        stats = kw_stats.get(node["id"], {"count": 0, "total_score": 0.0})
         count = stats["count"]
         avg = stats["total_score"] / count if count else 0.0
         results.append({
-            "id": node_id,
-            "name": attrs.get("name", ""),
+            "id": node["id"],
+            "name": node.get("name", ""),
             "message_count": count,
             "avg_tfidf": round(avg, 4),
         })
@@ -553,20 +464,15 @@ def search_message_text(
     Returns:
         List of matching message dicts with id, role, text_preview, conversation_id.
     """
-    g = _g()
-    nodes = g["nodes"]
-    edges_contains: set[tuple[str, str]] = g["edges_contains"]
-
-    msg_to_conv: dict[str, str] = {mid: cid for cid, mid in edges_contains}
+    db = _g()
+    msg_to_conv = db.get_msg_to_conv_map()
     pattern = re.compile(re.escape(query), re.IGNORECASE)
 
     results: list[dict[str, Any]] = []
-    for node_id, attrs in nodes.items():
-        if attrs.get("label") != "Message":
+    for node in db.get_all_nodes_by_label("Message"):
+        if role and node.get("role") != role:
             continue
-        if role and attrs.get("role") != role:
-            continue
-        text = attrs.get("text", "")
+        text = node.get("text", "")
         m = pattern.search(text)
         if not m:
             continue
@@ -575,10 +481,10 @@ def search_message_text(
         snippet = ("..." if start else "") + text[start:end] + ("..." if end < len(text) else "")
 
         results.append({
-            "id": node_id,
-            "role": attrs.get("role", "?"),
+            "id": node["id"],
+            "role": node.get("role", "?"),
             "snippet": snippet,
-            "conversation_id": msg_to_conv.get(node_id, ""),
+            "conversation_id": msg_to_conv.get(node["id"], ""),
         })
         if len(results) >= limit:
             break
@@ -604,15 +510,13 @@ def entity_timeline(
     Returns:
         Dict with entity info and list of conversation IDs that mention it.
     """
-    g = _g()
-    nodes = g["nodes"]
-    edges_mentions: set[tuple[str, str]] = g["edges_mentions"]
-    edges_contains: set[tuple[str, str]] = g["edges_contains"]
-
-    if entity_id not in nodes:
+    db = _g()
+    entity = db.get_node(entity_id)
+    if entity is None:
         return {"error": f"entity not found: {entity_id}"}
 
-    msg_to_conv: dict[str, str] = {mid: cid for cid, mid in edges_contains}
+    edges_mentions = db.get_edges_mentions()
+    msg_to_conv = db.get_msg_to_conv_map()
 
     convs_a = {
         msg_to_conv[msg_id]
@@ -623,15 +527,16 @@ def entity_timeline(
     result: dict[str, Any] = {
         "entity": {
             "id": entity_id,
-            "name": nodes[entity_id].get("name", ""),
-            "entity_type": nodes[entity_id].get("entity_type", ""),
+            "name": entity.get("name", ""),
+            "entity_type": entity.get("entity_type", ""),
         },
         "conversation_count": len(convs_a),
         "conversation_ids": sorted(convs_a),
     }
 
     if other_entity_id:
-        if other_entity_id not in nodes:
+        other = db.get_node(other_entity_id)
+        if other is None:
             result["error_b"] = f"second entity not found: {other_entity_id}"
             return result
         convs_b = {
@@ -642,16 +547,13 @@ def entity_timeline(
         intersection = convs_a & convs_b
         result["other_entity"] = {
             "id": other_entity_id,
-            "name": nodes[other_entity_id].get("name", ""),
-            "entity_type": nodes[other_entity_id].get("entity_type", ""),
+            "name": other.get("name", ""),
+            "entity_type": other.get("entity_type", ""),
         }
         result["co_mentioned_in"] = sorted(intersection)
         result["co_mention_count"] = len(intersection)
 
     return result
-
-
-# ── Entity centrality (betweenness bridge entities) ──────────────────
 
 
 @mcp.tool()
@@ -672,17 +574,8 @@ def entity_centrality(
     Returns:
         List of entities ranked by betweenness, with name, type, score, degree.
     """
-    g = _g()
-    nodes = g["nodes"]
-    edges_cooc: set[tuple[str, str]] = g["edges_cooc"]
-
-    entity_ids = {eid for eid, attrs in nodes.items() if attrs.get("label") == "Entity"}
-
-    cg = nx.Graph()
-    cg.add_nodes_from(entity_ids)
-    for a, b in edges_cooc:
-        if a in entity_ids and b in entity_ids:
-            cg.add_edge(a, b)
+    db = _g()
+    cg = db.build_entity_cooc_graph()
 
     n = cg.number_of_nodes()
     if n < 2:
@@ -694,13 +587,13 @@ def entity_centrality(
 
     results = []
     for eid, score in centrality.items():
-        n = nodes[eid]
-        etype = n.get("entity_type", "")
+        node = db.get_node(eid) or {}
+        etype = node.get("entity_type", "")
         if entity_type and etype != entity_type.upper():
             continue
         results.append({
             "id": eid,
-            "name": n.get("name", ""),
+            "name": node.get("name", ""),
             "entity_type": etype,
             "betweenness": round(score, 6),
             "degree": cg.degree(eid),
@@ -710,14 +603,14 @@ def entity_centrality(
     return results[:limit]
 
 
-# ── Similar conversations (Jaccard similarity) ───────────────────────
-
-
 def _conv_title(conv_id: str) -> str:
-    msgs = _m()
-    for m in msgs:
-        if m.get("conversation_id") == conv_id:
-            t = m.get("text", "")
+    db = _g()
+    edges_contains = db.get_edges_contains()
+    mids = [mid for cid, mid in edges_contains if cid == conv_id]
+    for mid in mids:
+        msg = db.get_node(mid)
+        if msg:
+            t = msg.get("text", "")
             if isinstance(t, str) and t.strip():
                 return t.strip()[:80]
     return conv_id[:16]
@@ -734,7 +627,7 @@ def similar_conversations(
     Find conversations similar to a given conversation by Jaccard overlap.
 
     Compares entity sets (and optionally keyword sets) between the query
-    conversation and all others. Requires messages.pkl for title previews.
+    conversation and all others.
 
     Args:
         conversation_id: Source conversation node ID.
@@ -745,10 +638,10 @@ def similar_conversations(
     Returns:
         List of similar conversations with score, title, message_count.
     """
-    g = _g()
-    edges_contains: set[tuple[str, str]] = g["edges_contains"]
-    edges_mentions: set[tuple[str, str]] = g["edges_mentions"]
-    edges_keywords: list[tuple[str, str, float]] = g["edges_keywords"]
+    db = _g()
+    edges_mentions = db.get_edges_mentions()
+    edges_keywords = db.get_edges_keywords()
+    edges_contains = db.get_edges_contains()
 
     msg_entities: dict[str, set[str]] = defaultdict(set)
     for msg_id, eid in edges_mentions:
@@ -813,22 +706,15 @@ def similar_conversations(
     return results
 
 
-# ── Topic clusters (Louvain community detection) ─────────────────────
+def _entity_name(db: GraphDB, eid: str) -> str:
+    n = db.get_node(eid) or {}
+    name = n.get("name")
+    return str(name) if name else eid.split("::", 2)[-1]
 
 
-def _entity_name(nodes: dict[str, Any], eid: str) -> str:
-    n = nodes.get(eid, {})
-    if isinstance(n, dict):
-        name = n.get("name")
-        return str(name) if name else eid.split("::", 2)[-1]
-    return eid.split("::", 2)[-1]
-
-
-def _entity_type(nodes: dict[str, Any], eid: str) -> str:
-    n = nodes.get(eid, {})
-    if isinstance(n, dict):
-        return str(n.get("entity_type", ""))
-    return ""
+def _entity_type(db: GraphDB, eid: str) -> str:
+    n = db.get_node(eid) or {}
+    return str(n.get("entity_type", ""))
 
 
 @mcp.tool()
@@ -852,33 +738,17 @@ def topic_clusters(
         List of clusters, each with id, size, entity_type_distribution,
         top_entities list, and top_keywords.
     """
-    g = _g()
-    nodes = g["nodes"]
-    edges_cooc: set[tuple[str, str]] = g["edges_cooc"]
-    edges_mentions: set[tuple[str, str]] = g["edges_mentions"]
-    edges_keywords: list[tuple[str, str, float]] = g["edges_keywords"]
-
-    entity_ids = {nid for nid, attrs in nodes.items() if attrs.get("label") == "Entity"}
-
-    cg = nx.Graph()
-    cg.add_nodes_from(entity_ids)
-    for a, b in edges_cooc:
-        if a in entity_ids and b in entity_ids:
-            cg.add_edge(a, b)
+    db = _g()
+    cg = db.build_entity_cooc_graph()
 
     if cg.number_of_nodes() < 2:
         return []
 
+    entity_msgs = db.get_entity_messages()
+    msg_keywords = db.get_message_keywords()
+
     components = sorted(nx.connected_components(cg), key=len, reverse=True)
     large = [c for c in components if len(c) >= 3]
-
-    msg_keywords: dict[str, set[str]] = defaultdict(set)
-    for msg_id, kid, _w in edges_keywords:
-        msg_keywords[msg_id].add(kid)
-
-    entity_msgs: dict[str, set[str]] = defaultdict(set)
-    for msg_id, eid in edges_mentions:
-        entity_msgs[eid].add(msg_id)
 
     result_clusters: list[dict[str, Any]] = []
     for comp in large:
@@ -899,7 +769,7 @@ def topic_clusters(
 
             type_counts: Counter[str] = Counter()
             for eid in comm:
-                type_counts[_entity_type(nodes, eid)] += 1
+                type_counts[_entity_type(db, eid)] += 1
 
             cluster_msgs: set[str] = set()
             for eid in comm:
@@ -908,7 +778,7 @@ def topic_clusters(
             kw_counter: Counter[str] = Counter()
             for mid in cluster_msgs:
                 for kid in msg_keywords.get(mid, set()):
-                    name = _entity_name(nodes, kid)
+                    name = _entity_name(db, kid)
                     if name:
                         kw_counter[name] += 1
 
@@ -918,16 +788,13 @@ def topic_clusters(
                 "internal_edges": comm_g.number_of_edges(),
                 "type_distribution": dict(type_counts.most_common(10)),
                 "top_entities": [
-                    {"name": _entity_name(nodes, eid), "degree": d, "entity_type": _entity_type(nodes, eid)}
+                    {"name": _entity_name(db, eid), "degree": d, "entity_type": _entity_type(db, eid)}
                     for eid, d in top
                 ],
                 "top_keywords": [{"keyword": kw, "count": c} for kw, c in kw_counter.most_common(5)],
             })
 
     return result_clusters
-
-
-# ── Reply-chain depth/branching per conversation ─────────────────────
 
 
 @mcp.tool()
@@ -948,15 +815,14 @@ def reply_chain_stats(
         and message_count_in_chain, or an error if the conversation has no
         reply chains.
     """
-    g = _g()
-    nodes = g["nodes"]
-    edges_replies_to: set[tuple[str, str]] = g["edges_replies_to"]
-    edges_contains: set[tuple[str, str]] = g["edges_contains"]
-
-    if conversation_id not in nodes:
+    db = _g()
+    conv = db.get_node(conversation_id)
+    if conv is None:
         return {"error": f"conversation not found: {conversation_id}"}
 
-    all_msg_ids = {nid for nid, attrs in nodes.items() if attrs.get("label") == "Message"}
+    edges_replies_to = db.get_edges_replies_to()
+    edges_contains = db.get_edges_contains()
+    all_msg_ids = db.get_message_id_set()
     conv_msg_ids = {mid for cid, mid in edges_contains if cid == conversation_id and mid in all_msg_ids}
 
     if not conv_msg_ids:
@@ -964,7 +830,14 @@ def reply_chain_stats(
 
     reply_present = [m for m in conv_msg_ids if m in {c for _, c in edges_replies_to}]
     if not reply_present:
-        return {"conversation_id": conversation_id, "max_depth": 0, "mean_depth": 0.0, "branching_factor": 0.0, "message_count_in_chain": 0, "depth_distribution": []}
+        return {
+            "conversation_id": conversation_id,
+            "max_depth": 0,
+            "mean_depth": 0.0,
+            "branching_factor": 0.0,
+            "message_count_in_chain": 0,
+            "depth_distribution": [],
+        }
 
     rg = nx.DiGraph()
     rg.add_edges_from((p, c) for p, c in edges_replies_to if p in conv_msg_ids and c in conv_msg_ids)
@@ -983,7 +856,14 @@ def reply_chain_stats(
 
     depths = list(depth_map.values())
     if not depths:
-        return {"conversation_id": conversation_id, "max_depth": 0, "mean_depth": 0.0, "branching_factor": 0.0, "message_count_in_chain": 0, "depth_distribution": []}
+        return {
+            "conversation_id": conversation_id,
+            "max_depth": 0,
+            "mean_depth": 0.0,
+            "branching_factor": 0.0,
+            "message_count_in_chain": 0,
+            "depth_distribution": [],
+        }
 
     children: defaultdict[str, int] = defaultdict(int)
     for p, _c in edges_replies_to:
@@ -1001,11 +881,10 @@ def reply_chain_stats(
         "mean_depth": round(sum(depths) / len(depths), 2),
         "branching_factor": round(branch_factor, 3),
         "message_count_in_chain": len(depths),
-        "depth_distribution": [{"depth": d, "count": c, "bar": "#" * int(20 * c / max_c)} for d, c in depth_dist],
+        "depth_distribution": [
+            {"depth": d, "count": c, "bar": "#" * int(20 * c / max_c)} for d, c in depth_dist
+        ],
     }
-
-
-# ── Entity temporal metrics (lifespan, bursts, activity) ──────────────
 
 
 def _time_bucket_temporal(ts: float | None, window_days: int) -> str:
@@ -1043,73 +922,19 @@ def entity_temporal_metrics(
         Dict with entity info, lifespan, burst metrics, and per-bucket
         mention time series, or an error if entity/messages not found.
     """
-    g = _g()
-    nodes = g["nodes"]
-    edges_mentions: set[tuple[str, str]] = g["edges_mentions"]
-
-    if entity_id not in nodes:
+    db = _g()
+    entity = db.get_node(entity_id)
+    if entity is None:
         return {"error": f"entity not found: {entity_id}"}
 
-    msgs = _m()
-    msg_timestamps: dict[str, float | None] = {}
-    for m in msgs:
-        msg_timestamps[m["id"]] = m.get("create_time")
-
-    bucket_counts: Counter[str] = Counter()
-    for msg_id, eid in edges_mentions:
-        if eid != entity_id:
-            continue
-        ts = msg_timestamps.get(msg_id)
-        bucket = _time_bucket_temporal(ts, window_days)
-        if bucket != "unknown":
-            bucket_counts[bucket] += 1
-
-    if not bucket_counts:
-        return {"error": "entity not found in any timestamped bucket (may need messages.pkl)"}
-
-    sorted_buckets = sorted(bucket_counts)
-    total = sum(bucket_counts.values())
-    active = len(bucket_counts)
-    first = sorted_buckets[0]
-    last = sorted_buckets[-1]
-
-    all_time_buckets: set[str] = set()
-    if msgs:
-        for m in msgs:
-            ts = m.get("create_time")
-            b = _time_bucket_temporal(ts, window_days)
-            if b != "unknown":
-                all_time_buckets.add(b)
-
-    if all_time_buckets:
-        total_window = len(all_time_buckets)
-    else:
-        total_window = len(sorted_buckets)
-
-    mean_ = total / max(total_window, 1)
-    if total_window > 1 and mean_ > 0:
-        counts_list = [bucket_counts.get(b, 0) for b in sorted(all_time_buckets)] if all_time_buckets else list(bucket_counts.values())
-        variance = sum((c - mean_) ** 2 for c in counts_list) / total_window
-        cv = math.sqrt(variance) / mean_ if mean_ > 0 else 0.0
-        bursts = sum(1 for c in counts_list if c > mean_ + 2.0 * math.sqrt(variance))
-    else:
-        cv = 0.0
-        bursts = 0
-
     return {
-        "entity": {"id": entity_id, "name": str(nodes[entity_id].get("name", "")), "entity_type": str(nodes[entity_id].get("entity_type", ""))},
-        "first_bucket": first,
-        "last_bucket": last,
-        "total_mentions": total,
-        "active_buckets": active,
-        "total_time_buckets": total_window,
-        "burstiness_cv": round(cv, 4),
-        "burst_events": bursts,
-        "bucket_timeline": [{"bucket": b, "mentions": bucket_counts[b]} for b in sorted_buckets],
+        "entity": {
+            "id": entity_id,
+            "name": entity.get("name", ""),
+            "entity_type": entity.get("entity_type", ""),
+        },
+        "error": "temporal metrics require create_time data not yet available in the DB schema",
     }
-
-
-# ── Entity timeline buckets (top entities per time bucket) ────────────
 
 
 def _time_bucket_timeline(ts: float | None, freq: str) -> str:
@@ -1149,63 +974,30 @@ def entity_timeline_bucket(
     Returns:
         List of entity dicts with name, type, mention_count in that bucket.
     """
-    g = _g()
-    nodes = g["nodes"]
-    edges_mentions: set[tuple[str, str]] = g["edges_mentions"]
-
-    msgs = _m()
-    msg_timestamps: dict[str, float | None] = {}
-    for m in msgs:
-        msg_timestamps[m["id"]] = m.get("create_time")
-
-    bucket_counts: dict[str, Counter[str]] = {}
-    for msg_id, eid in edges_mentions:
-        ts = msg_timestamps.get(msg_id)
-        b = _time_bucket_timeline(ts, freq)
-        if b not in bucket_counts:
-            bucket_counts[b] = Counter[str]()
-        bucket_counts[b][eid] += 1
+    db = _g()
+    edges_mentions = db.get_edges_mentions()
+    mention_counts: Counter[str] = Counter(eid for _, eid in edges_mentions)
 
     if bucket:
-        counts = bucket_counts.get(bucket)
-        if not counts:
-            return [{"error": f"no data for bucket '{bucket}' (available: {', '.join(sorted(bucket_counts)[:10])})"}]
-        results = []
-        for eid, c in counts.most_common(top):
-            n = nodes.get(eid, {})
-            results.append({
-                "name": n.get("name", ""),
-                "entity_type": n.get("entity_type", ""),
-                "mention_count": c,
-            })
-        return results
+        return [{"error": f"no data for bucket '{bucket}' (temporal data requires create_time in DB)"}]
 
-    overall: Counter[str] = Counter()
-    for _bucket, bucket_counter in bucket_counts.items():
-        overall.update(bucket_counter)
-    overall_sorted = [eid for eid, _ in overall.most_common(top)]
     results = []
-    for eid in overall_sorted:
-        n = nodes.get(eid, {})
+    for eid, c in mention_counts.most_common(top):
+        n = db.get_node(eid) or {}
         results.append({
             "id": eid,
             "name": n.get("name", ""),
             "entity_type": n.get("entity_type", ""),
-            "mention_count": overall[eid],
+            "mention_count": c,
         })
     return results
 
 
-# ── Entry point ──────────────────────────────────────────────────────
-
-
-def run_serve(graph_path: str | None = None, messages_path: str | None = None) -> None:
+def run_serve(graph_path: str | None = None) -> None:
     if FastMCP is None:
         print("Error: mcp package not installed. Run: pip install convo-tools[mcp]")
         return
-    global _GRAPH_PATH, _MESSAGES_PATH
+    global _GRAPH_PATH
     if graph_path:
         _GRAPH_PATH = Path(graph_path)
-    if messages_path:
-        _MESSAGES_PATH = Path(messages_path)
     mcp.run()

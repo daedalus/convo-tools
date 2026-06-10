@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import csv
 import os
-import pickle
 import re
 import sys
 from collections import defaultdict
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -16,40 +16,42 @@ import numpy as np
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 
-
-def _entity_name(nodes: dict[str, Any], eid: str) -> str:
-    n = nodes.get(eid, {})
-    if isinstance(n, dict):
-        name = n.get("name")
-        return str(name) if name else eid.split("::", 2)[-1]
-    return eid.split("::", 2)[-1]
+from convo_tools._graph_db import GraphDB
 
 
-def _msg_text(nodes: dict[str, Any], msg_id: str) -> str:
-    n = nodes.get(msg_id, {})
-    if isinstance(n, dict):
-        t = n.get("text", "")
-        return str(t) if t else ""
-    return ""
+def _entity_name(db: GraphDB, eid: str) -> str:
+    n = db.get_node(eid)
+    if n is None:
+        return eid.split("::", 2)[-1]
+    name = n.get("name")
+    return str(name) if name else eid.split("::", 2)[-1]
 
 
-def _msg_role(nodes: dict[str, Any], msg_id: str) -> str:
-    n = nodes.get(msg_id, {})
-    if isinstance(n, dict):
-        r = n.get("role", "")
-        return str(r) if r else "?"
-    return "?"
+def _msg_text(db: GraphDB, msg_id: str) -> str:
+    n = db.get_node(msg_id)
+    if n is None:
+        return ""
+    t = n.get("text", "")
+    return str(t) if t else ""
+
+
+def _msg_role(db: GraphDB, msg_id: str) -> str:
+    n = db.get_node(msg_id)
+    if n is None:
+        return "?"
+    r = n.get("role", "")
+    return str(r) if r else "?"
 
 
 def _search_entities(
     terms: list[str],
-    nodes: dict[str, Any],
-    edges_mentions: set[tuple[str, str]],
+    db: GraphDB,
+    edges_mentions: list[tuple[str, str]],
 ) -> tuple[dict[str, float], dict[str, set[str]]]:
     entity_id_to_name: dict[str, str] = {}
-    for nid, attrs in nodes.items():
-        if isinstance(attrs, dict) and attrs.get("label") not in ("Conversation", "Message", "Keyword"):
-            entity_id_to_name[nid] = _entity_name(nodes, nid)
+    for _msg_id, ent_id in edges_mentions:
+        if ent_id not in entity_id_to_name:
+            entity_id_to_name[ent_id] = _entity_name(db, ent_id)
 
     matched_entities: dict[str, float] = {}
     ent_to_msgs: dict[str, set[str]] = defaultdict(set)
@@ -73,13 +75,13 @@ def _search_entities(
 
 def _search_keywords(
     terms: list[str],
-    nodes: dict[str, Any],
+    db: GraphDB,
     edges_keywords: list[tuple[str, str, float]],
 ) -> tuple[dict[str, float], dict[str, set[str]]]:
     kw_id_to_name: dict[str, str] = {}
-    for nid, attrs in nodes.items():
-        if isinstance(attrs, dict) and attrs.get("label") == "Keyword":
-            kw_id_to_name[nid] = _entity_name(nodes, nid)
+    for _msg_id, kid, _score in edges_keywords:
+        if kid not in kw_id_to_name:
+            kw_id_to_name[kid] = _entity_name(db, kid)
 
     matched_kws: dict[str, float] = {}
     kw_to_msgs: dict[str, set[str]] = defaultdict(set)
@@ -101,15 +103,15 @@ def _search_keywords(
 
 def _build_results(
     query: str,
-    nodes: dict[str, Any],
-    edges_mentions: set[tuple[str, str]],
+    db: GraphDB,
+    edges_mentions: list[tuple[str, str]],
     edges_keywords: list[tuple[str, str, float]],
     messages_pkl: list[dict[str, Any]] | None,
 ) -> list[dict[str, Any]]:
     terms = [t.lower() for t in re.findall(r"\w+", query) if len(t) > 1]
 
-    matched_entities, ent_to_msgs = _search_entities(terms, nodes, edges_mentions)
-    matched_kws, kw_to_msgs = _search_keywords(terms, nodes, edges_keywords)
+    matched_entities, ent_to_msgs = _search_entities(terms, db, edges_mentions)
+    matched_kws, kw_to_msgs = _search_keywords(terms, db, edges_keywords)
 
     entity_msgs: dict[str, set[str]] = defaultdict(set)
     for eid in matched_entities:
@@ -149,12 +151,12 @@ def _build_results(
     seen_convos: set[str] = set()
 
     for score, mid in msg_scores[:50]:
-        text = _msg_text(nodes, mid)
-        role = _msg_role(nodes, mid)
+        text = _msg_text(db, mid)
+        role = _msg_role(db, mid)
         ents = sorted(entity_msgs.get(mid, set()), key=lambda e: -matched_entities.get(e, 0.0))
-        entity_names = [_entity_name(nodes, e) for e in ents[:5]]
+        entity_names = [_entity_name(db, e) for e in ents[:5]]
         kws = sorted(kw_msgs.get(mid, set()), key=lambda k: -matched_kws.get(k, 0.0))
-        kw_names = [_entity_name(nodes, k) for k in kws[:5]]
+        kw_names = [_entity_name(db, k) for k in kws[:5]]
 
         conv_id = msg_index.get(mid, {}).get("conversation_id", "?") if msg_index else "?"
         ts = msg_index.get(mid, {}).get("create_time") if msg_index else None
@@ -297,69 +299,67 @@ def _call_llm(query: str, context: str) -> str:
         return f"Error calling LLM: {e}"
 
 
-def run_query(args: argparse.Namespace) -> None:
-    with open(args.graph, "rb") as f:
-        graph = pickle.load(f)
-
-    if not isinstance(graph, dict) or "nodes" not in graph:
-        print("Error: graph pickle missing 'nodes' key", file=sys.stderr)
-        return
-
-    nodes = graph.get("nodes", {})
-    edges_mentions = graph.get("edges_mentions", set())
-    edges_keywords = graph.get("edges_keywords", [])
-
-    messages_pkl: list[dict[str, Any]] | None = None
+def run_query(db_path: str | Path, args: argparse.Namespace) -> None:
+    db = GraphDB(db_path)
     try:
-        with open(args.messages, "rb") as f:
-            messages_pkl = pickle.load(f)
-    except (FileNotFoundError, pickle.UnpicklingError):
-        pass
+        edges_mentions = db.get_edges_mentions()
+        edges_keywords = db.get_edges_keywords()
 
-    query = args.query
-    if not query:
-        print("Error: no query provided.", file=sys.stderr)
-        return
+        import pickle
 
-    print(f"Query: {query}", flush=True)
-    print()
+        messages_pkl: list[dict[str, Any]] | None = None
+        try:
+            with open(args.messages, "rb") as f:
+                messages_pkl = pickle.load(f)
+        except (FileNotFoundError, pickle.UnpicklingError):
+            pass
 
-    results = _build_results(query, nodes, edges_mentions, edges_keywords, messages_pkl)
+        query = args.query
+        if not query:
+            print("Error: no query provided.", file=sys.stderr)
+            return
 
-    if not results:
-        print("No matching results found.")
-        return
-
-    print(f"Found {len(results)} matching messages across {len({r['conversation_id'] for r in results})} conversations.")
-    print()
-
-    if args.llm:
-        print("Building LLM context and calling Claude...", flush=True)
-        context = _build_llm_context(results, max_chars=args.max_context)
-        answer = _call_llm(query, context)
+        print(f"Query: {query}", flush=True)
         print()
-        print("═══ LLM Response ═══")
-        print()
-        print(answer)
-        print()
-    else:
-        top_n = min(args.top, len(results))
-        print(f"Top {top_n} matching messages:")
-        print(f"  {'score':>6s}  {'role':>8s}  {'text':60s}  {'entities':20s}")
-        print(f"  {'─'*6}  {'─'*8}  {'─'*60}  {'─'*20}")
-        for r in results[:top_n]:
-            text = r["text"][:60]
-            ents = r["entities"][:20]
-            print(f"  {r['score']:>6.3f}  {r['role']:>8s}  {text:60s}  {ents:20s}")
 
-    if args.output:
-        with open(args.output, "w", newline="", encoding="utf-8") as f:
-            w = csv.writer(f)
-            w.writerow(["msg_id", "score", "role", "text", "entities", "keywords", "conversation_id", "timestamp"])
-            for r in results:
-                w.writerow([
-                    r["msg_id"], f"{r['score']:.4f}", r["role"],
-                    r["text"], r["entities"], r["keywords"],
-                    r["conversation_id"], r["timestamp"] or "",
-                ])
-        print(f"\nWrote {args.output} ({len(results)} messages)")
+        results = _build_results(query, db, edges_mentions, edges_keywords, messages_pkl)
+
+        if not results:
+            print("No matching results found.")
+            return
+
+        print(f"Found {len(results)} matching messages across {len({r['conversation_id'] for r in results})} conversations.")
+        print()
+
+        if args.llm:
+            print("Building LLM context and calling Claude...", flush=True)
+            context = _build_llm_context(results, max_chars=args.max_context)
+            answer = _call_llm(query, context)
+            print()
+            print("═══ LLM Response ═══")
+            print()
+            print(answer)
+            print()
+        else:
+            top_n = min(args.top, len(results))
+            print(f"Top {top_n} matching messages:")
+            print(f"  {'score':>6s}  {'role':>8s}  {'text':60s}  {'entities':20s}")
+            print(f"  {'─'*6}  {'─'*8}  {'─'*60}  {'─'*20}")
+            for r in results[:top_n]:
+                text = r["text"][:60]
+                ents = r["entities"][:20]
+                print(f"  {r['score']:>6.3f}  {r['role']:>8s}  {text:60s}  {ents:20s}")
+
+        if args.output:
+            with open(args.output, "w", newline="", encoding="utf-8") as f:
+                w = csv.writer(f)
+                w.writerow(["msg_id", "score", "role", "text", "entities", "keywords", "conversation_id", "timestamp"])
+                for r in results:
+                    w.writerow([
+                        r["msg_id"], f"{r['score']:.4f}", r["role"],
+                        r["text"], r["entities"], r["keywords"],
+                        r["conversation_id"], r["timestamp"] or "",
+                    ])
+            print(f"\nWrote {args.output} ({len(results)} messages)")
+    finally:
+        db.close()

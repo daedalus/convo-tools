@@ -4,6 +4,7 @@ import argparse
 import pickle
 from pathlib import Path
 
+from convo_tools._graph_db import GraphDB
 from convo_tools._temporal import run_temporal
 
 
@@ -32,60 +33,68 @@ def _messages() -> list[dict]:
 
 
 def test_temporal_basic(tmp_path: Path, capsys) -> None:
-    pkl_g = tmp_path / "graph.pkl"
+    db_path = tmp_path / "test.db"
+    db = GraphDB(db_path)
+    db.add_graph_batch(_graph())
+    db.close()
+
     pkl_m = tmp_path / "messages.pkl"
-    with open(pkl_g, "wb") as f:
-        pickle.dump(_graph(), f)
     with open(pkl_m, "wb") as f:
         pickle.dump(_messages(), f)
 
-    args = argparse.Namespace(graph=pkl_g, messages=pkl_m, window=30, top=20, co_activation=False, output=None)
-    run_temporal(args)
+    args = argparse.Namespace(messages=pkl_m, window=30, top=20, co_activation=False, output=None)
+    run_temporal(db_path, args)
     out = capsys.readouterr().out
     assert "alice" in out
     assert "Bucket activity" in out
 
 
 def test_temporal_co_activation(tmp_path: Path, capsys) -> None:
-    pkl_g = tmp_path / "graph.pkl"
+    db_path = tmp_path / "test.db"
+    db = GraphDB(db_path)
+    db.add_graph_batch(_graph())
+    db.close()
+
     pkl_m = tmp_path / "messages.pkl"
-    with open(pkl_g, "wb") as f:
-        pickle.dump(_graph(), f)
     with open(pkl_m, "wb") as f:
         pickle.dump(_messages(), f)
 
-    args = argparse.Namespace(graph=pkl_g, messages=pkl_m, window=30, top=20, co_activation=True, output=None)
-    run_temporal(args)
+    args = argparse.Namespace(messages=pkl_m, window=30, top=20, co_activation=True, output=None)
+    run_temporal(db_path, args)
     out = capsys.readouterr().out
     assert "co-activating" in out
 
 
 def test_temporal_csv(tmp_path: Path) -> None:
-    pkl_g = tmp_path / "graph.pkl"
+    db_path = tmp_path / "test.db"
+    db = GraphDB(db_path)
+    db.add_graph_batch(_graph())
+    db.close()
+
     pkl_m = tmp_path / "messages.pkl"
-    with open(pkl_g, "wb") as f:
-        pickle.dump(_graph(), f)
     with open(pkl_m, "wb") as f:
         pickle.dump(_messages(), f)
     out_csv = tmp_path / "out.csv"
 
-    args = argparse.Namespace(graph=pkl_g, messages=pkl_m, window=30, top=20, co_activation=False, output=out_csv)
-    run_temporal(args)
+    args = argparse.Namespace(messages=pkl_m, window=30, top=20, co_activation=False, output=out_csv)
+    run_temporal(db_path, args)
     assert out_csv.exists()
 
 
 def test_temporal_pseudo_time(tmp_path: Path, capsys) -> None:
     g = _graph()
-    pkl_g = tmp_path / "graph.pkl"
+    db_path = tmp_path / "test.db"
+    db = GraphDB(db_path)
+    db.add_graph_batch(g)
+    db.close()
+
     pkl_m = tmp_path / "messages.pkl"
-    with open(pkl_g, "wb") as f:
-        pickle.dump(g, f)
     with open(pkl_m, "wb") as f:
         pickle.dump([
             {"id": "msg::1", "conversation_id": "conv::c1", "role": "user", "text": "hi"},
             {"id": "msg::2", "conversation_id": "conv::c1", "role": "assistant", "text": "AI"},
         ], f)
 
-    args = argparse.Namespace(graph=pkl_g, messages=pkl_m, window=30, top=20, co_activation=False, output=None)
-    run_temporal(args)
+    args = argparse.Namespace(messages=pkl_m, window=30, top=20, co_activation=False, output=None)
+    run_temporal(db_path, args)
     assert "pseudo-time" in capsys.readouterr().out

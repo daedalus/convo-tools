@@ -1,48 +1,46 @@
 from __future__ import annotations
 
 import csv
-import pickle
 import sys
 from collections import Counter, defaultdict
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     import argparse
+    from pathlib import Path
     from typing import Any
 
 import networkx as nx
 
+from convo_tools._graph_db import GraphDB
 
-def _conv_title(conv_id: str, nodes: dict[str, Any], edges_contains: set[tuple[str, str]]) -> str:
+
+def _conv_title(conv_id: str, db: GraphDB, edges_contains: list[tuple[str, str]]) -> str:
     msg_ids = [mid for cid, mid in edges_contains if cid == conv_id]
     for mid in msg_ids:
-        n = nodes.get(mid, {})
-        if isinstance(n, dict):
+        n = db.get_node(mid)
+        if n is not None:
             text = n.get("text")
             if isinstance(text, str) and text:
                 return text[:60]
     return conv_id[:16]
 
 
-def run_depth(args: argparse.Namespace) -> None:
-    with open(args.pickle_path, "rb") as f:
-        graph = pickle.load(f)
+def run_depth(db_path: str | Path, args: argparse.Namespace) -> None:
+    db = GraphDB(db_path)
 
-    if not isinstance(graph, dict) or "nodes" not in graph:
-        print("Error: graph pickle missing 'nodes' key", file=sys.stderr)
-        return
-
-    nodes = graph.get("nodes", {})
-    edges_replies_to = graph.get("edges_replies_to", set())
-    edges_contains = graph.get("edges_contains", set())
+    message_nodes = db.get_all_nodes_by_label("Message")
+    edges_replies_to: list[tuple[str, str]] = db.get_edges_replies_to()
+    edges_contains: list[tuple[str, str]] = db.get_edges_contains()
 
     if not edges_replies_to:
         print("No reply edges found in graph.")
+        db.close()
         return
 
     g = nx.DiGraph()
     g.add_edges_from(edges_replies_to)
-    all_msg_ids = {nid for nid, attrs in nodes.items() if attrs.get("label") == "Message"}
+    all_msg_ids = {n["id"] for n in message_nodes}
     g.add_nodes_from(all_msg_ids)
 
     if not nx.is_directed_acyclic_graph(g):
@@ -51,7 +49,6 @@ def run_depth(args: argparse.Namespace) -> None:
         for cycle in cycles:
             print(f"  Cycle: {' -> '.join(cycle[:5])}{'...' if len(cycle) > 5 else ''}", file=sys.stderr)
 
-    # Depth via topological DP (longest path in DAG)
     try:
         topo = list(nx.topological_sort(g))
     except nx.NetworkXUnfeasible:
@@ -67,7 +64,6 @@ def run_depth(args: argparse.Namespace) -> None:
         else:
             depth[node_id] = max(depth[p] for p in preds) + 1
 
-    # Group messages by conversation
     conv_msg_ids: dict[str, list[str]] = defaultdict(list)
     for conv_id, msg_id in edges_contains:
         if msg_id in depth:
@@ -75,6 +71,7 @@ def run_depth(args: argparse.Namespace) -> None:
 
     if not conv_msg_ids:
         print("No reply-chain messages found in any conversation.")
+        db.close()
         return
 
     conv_metrics: list[tuple[int, str, int, float, float, str, str]] = []
@@ -91,7 +88,7 @@ def run_depth(args: argparse.Namespace) -> None:
         non_leaf = [c for c in children.values() if c > 0]
         branch_factor = sum(non_leaf) / len(non_leaf) if non_leaf else 0.0
 
-        title = _conv_title(conv_id, nodes, edges_contains)
+        title = _conv_title(conv_id, db, edges_contains)
         depth_dist = " ".join(f"{d}:{depths.count(d)}" for d in sorted(set(depths)))
         conv_metrics.append((max_depth, conv_id, n_msgs, mean_depth, branch_factor, title, depth_dist))
 
@@ -105,7 +102,6 @@ def run_depth(args: argparse.Namespace) -> None:
     for max_depth, conv_id, n_msgs, mean_depth, branch_factor, title, _dist in conv_metrics[:args.top]:
         print(f"  {max_depth:>6d}  {n_msgs:>5d}  {mean_depth:>6.2f}  {branch_factor:>7.3f}  {title:48s}")
 
-    # Depth distribution across all conversations
     all_depths = [d for cids in conv_msg_ids.values() for mid in cids for d in [depth[mid]]]
     depth_hist = Counter(all_depths)
     print(f"\nDepth distribution across all reply-chain messages ({len(all_depths)} messages):")
@@ -121,3 +117,5 @@ def run_depth(args: argparse.Namespace) -> None:
             for max_depth, conv_id, n_msgs, mean_depth, branch_factor, title, dist in conv_metrics:
                 w.writerow([conv_id, title, n_msgs, max_depth, f"{mean_depth:.2f}", f"{branch_factor:.3f}", dist])
         print(f"\nWrote {args.output} ({len(conv_metrics)} conversations)")
+
+    db.close()

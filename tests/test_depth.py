@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import argparse
-import pickle
 from pathlib import Path
 
 from convo_tools._depth import run_depth
+from convo_tools._graph_db import GraphDB
 
 
 def _graph(reply_edges: set) -> dict:
@@ -31,36 +31,39 @@ def _graph(reply_edges: set) -> dict:
 
 def test_depth_basic(tmp_path: Path, capsys) -> None:
     g = _graph({("msg::1", "msg::2"), ("msg::2", "msg::3"), ("msg::3", "msg::4")})
-    pkl = tmp_path / "graph.pkl"
-    with open(pkl, "wb") as f:
-        pickle.dump(g, f)
+    db_path = tmp_path / "test.db"
+    db = GraphDB(db_path)
+    db.add_graph_batch(g)
+    db.close()
 
-    args = argparse.Namespace(pickle_path=pkl, top=20, output=None)
-    run_depth(args)
+    args = argparse.Namespace(top=20, output=None)
+    run_depth(db_path, args)
     captured = capsys.readouterr().out
     assert "depth" in captured
 
 
 def test_depth_no_reply_edges(tmp_path: Path, capsys) -> None:
     g = _graph(set())
-    pkl = tmp_path / "graph.pkl"
-    with open(pkl, "wb") as f:
-        pickle.dump(g, f)
+    db_path = tmp_path / "test.db"
+    db = GraphDB(db_path)
+    db.add_graph_batch(g)
+    db.close()
 
-    args = argparse.Namespace(pickle_path=pkl, top=20, output=None)
-    run_depth(args)
+    args = argparse.Namespace(top=20, output=None)
+    run_depth(db_path, args)
     captured = capsys.readouterr().out
     assert "No reply edges" in captured
 
 
 def test_depth_csv(tmp_path: Path, capsys) -> None:
     g = _graph({("msg::1", "msg::2")})
-    pkl = tmp_path / "graph.pkl"
-    with open(pkl, "wb") as f:
-        pickle.dump(g, f)
+    db_path = tmp_path / "test.db"
+    db = GraphDB(db_path)
+    db.add_graph_batch(g)
+    db.close()
     out_csv = tmp_path / "out.csv"
 
-    args = argparse.Namespace(pickle_path=pkl, top=20, output=out_csv)
-    run_depth(args)
+    args = argparse.Namespace(top=20, output=out_csv)
+    run_depth(db_path, args)
     assert out_csv.exists()
     assert out_csv.read_text().startswith("conv_id")

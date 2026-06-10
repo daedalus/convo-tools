@@ -2,14 +2,16 @@ from __future__ import annotations
 
 import csv
 import itertools
-import pickle
 import sys
 from collections import defaultdict
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     import argparse
+    from pathlib import Path
     from typing import Any
+
+from convo_tools._graph_db import GraphDB
 
 
 def _conv_title(conv_id: str, msgs_by_conv: dict[str, list[dict[str, Any]]]) -> str:
@@ -21,19 +23,18 @@ def _conv_title(conv_id: str, msgs_by_conv: dict[str, list[dict[str, Any]]]) -> 
     return conv_id[:16]
 
 
-def run_similarity(args: argparse.Namespace) -> None:
-    with open(args.graph, "rb") as f:
-        graph = pickle.load(f)
+def run_similarity(db_path: str | Path, args: argparse.Namespace) -> None:
+    import pickle
+
+    db = GraphDB(db_path)
+
+    edges_contains = db.get_edges_contains()
+    edges_mentions = db.get_edges_mentions()
+    edges_keywords = db.get_edges_keywords()
+
     with open(args.messages, "rb") as f:
         messages: list[dict[str, Any]] = pickle.load(f)
 
-    if not isinstance(graph, dict) or "nodes" not in graph:
-        print("Error: graph pickle missing 'nodes' key", file=sys.stderr)
-        return
-
-    edges_contains = graph.get("edges_contains", set())
-    edges_mentions = graph.get("edges_mentions", set())
-    edges_keywords = graph.get("edges_keywords", [])
     msg_entities: dict[str, set[str]] = defaultdict(set)
     for msg_id, entity_id in edges_mentions:
         msg_entities[msg_id].add(entity_id)
@@ -93,6 +94,7 @@ def run_similarity(args: argparse.Namespace) -> None:
 
     if not scored:
         print("No similar conversation pairs found above threshold.")
+        db.close()
         return
 
     print(f"Found {len(scored)} pairs above {min_threshold}")
@@ -115,3 +117,5 @@ def run_similarity(args: argparse.Namespace) -> None:
                 tb = _conv_title(b, msgs_by_conv)
                 w.writerow([f"{score:.4f}", a, b, ta, tb])
         print(f"\nWrote {args.output} ({len(scored)} pairs)")
+
+    db.close()

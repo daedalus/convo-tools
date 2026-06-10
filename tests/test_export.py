@@ -4,10 +4,11 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from convo_tools._export import graph_to_gexf
+from convo_tools._graph_db import GraphDB
 
 
-def _graph() -> dict:
-    return {
+def _populate_db(db_path: Path) -> GraphDB:
+    data = {
         "nodes": {
             "conv::c1": {"label": "Conversation"},
             "msg::1": {"label": "Message", "role": "user", "text": "Hello"},
@@ -21,28 +22,29 @@ def _graph() -> dict:
         "edges_cooc": {("entity::PERSON::alice", "entity::ORG::openai")},
         "edges_keywords": [("msg::1", "kw::hello", 0.5)],
     }
+    db = GraphDB(db_path)
+    db.add_graph_batch(data)
+    return db
 
 
 def test_gexf_output(tmp_path: Path) -> None:
     out = tmp_path / "test.gexf"
-    graph_to_gexf(_graph(), out)
+    db = _populate_db(tmp_path / "test.db")
+    graph_to_gexf(db, out)
+    db.close()
 
     assert out.exists()
     content = out.read_text()
     assert "node" in content and "edge" in content
-    # Count node/edge occurrences as a simple XML sanity check
     assert content.count("<node ") + content.count("<node\n") >= 5
     assert content.count("<edge ") + content.count("<edge\n") >= 5
 
 
 def test_gexf_no_nodes(tmp_path: Path) -> None:
-    g = {
-        "nodes": {},
-        "edges_contains": set(), "edges_replies_to": set(),
-        "edges_mentions": set(), "edges_cooc": set(), "edges_keywords": [],
-    }
+    db_path = tmp_path / "empty.db"
+    db = GraphDB(db_path)
     out = tmp_path / "empty.gexf"
-    graph_to_gexf(g, out)
+    graph_to_gexf(db, out)
+    db.close()
     content = out.read_text()
-    # Empty graph should have no <node> elements (closing </nodes> or self-closing <nodes/> is fine)
     assert "<node>" not in content

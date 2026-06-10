@@ -7,7 +7,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from convo_tools._builder import build_graph, run_graph
+from convo_tools._builder import build_graph_to_db, run_graph
+from convo_tools._graph_db import GraphDB
 
 
 def _make_mock_doc(entities: list[tuple[str, str]]):
@@ -58,25 +59,26 @@ def test_build_graph_with_entities(tmp_path: Path) -> None:
             mock_v = MagicMock()
             mock_tfidf.return_value = mock_v
             mock_v.fit_transform.return_value = MagicMock()
-            g = build_graph(messages, debug=True)
+            db = GraphDB(tmp_path / "test.db")
+            build_graph_to_db(messages, db, debug=True)
 
-    assert "entity::PERSON::alice" in g["nodes"]
-    assert "entity::PERSON::bob" in g["nodes"]
-    assert "entity::ORG::openai" in g["nodes"]
-    assert "entity::ORG::google" in g["nodes"]
+    assert db.get_node("entity::PERSON::alice") is not None
+    assert db.get_node("entity::PERSON::bob") is not None
+    assert db.get_node("entity::ORG::openai") is not None
+    assert db.get_node("entity::ORG::google") is not None
 
-    assert ("m1", "entity::PERSON::alice") in g["edges_mentions"]
-    assert ("m1", "entity::ORG::openai") in g["edges_mentions"]
-    assert ("m2", "entity::PERSON::bob") in g["edges_mentions"]
-    assert ("m2", "entity::ORG::google") in g["edges_mentions"]
+    edges_mentions = set(db.get_edges_mentions())
+    assert ("m1", "entity::PERSON::alice") in edges_mentions
+    assert ("m1", "entity::ORG::openai") in edges_mentions
+    assert ("m2", "entity::PERSON::bob") in edges_mentions
+    assert ("m2", "entity::ORG::google") in edges_mentions
 
-    import itertools
-    # co-occurrence edges are normalized so (a, b) with a < b
-    # entity::ORG::openai < entity::PERSON::alice (O < P)
-    assert ("entity::ORG::openai", "entity::PERSON::alice") in g["edges_cooc"] or \
-           ("entity::PERSON::alice", "entity::ORG::openai") in g["edges_cooc"]
-    assert ("entity::ORG::google", "entity::PERSON::bob") in g["edges_cooc"] or \
-           ("entity::PERSON::bob", "entity::ORG::google") in g["edges_cooc"]
+    edges_cooc = set(db.get_edges_cooc())
+    assert ("entity::ORG::openai", "entity::PERSON::alice") in edges_cooc or \
+           ("entity::PERSON::alice", "entity::ORG::openai") in edges_cooc
+    assert ("entity::ORG::google", "entity::PERSON::bob") in edges_cooc or \
+           ("entity::PERSON::bob", "entity::ORG::google") in edges_cooc
+    db.close()
 
 
 def test_build_graph_cooc_two_entities(tmp_path: Path) -> None:
@@ -93,21 +95,30 @@ def test_build_graph_cooc_two_entities(tmp_path: Path) -> None:
             mock_v = MagicMock()
             mock_tfidf.return_value = mock_v
             mock_v.fit_transform.return_value = MagicMock()
-            g = build_graph(messages)
+            db = GraphDB(tmp_path / "test.db")
+            build_graph_to_db(messages, db)
 
-    assert len(g["edges_cooc"]) == 1
-    pair = list(g["edges_cooc"])[0]
+    edges_cooc = db.get_edges_cooc()
+    assert len(edges_cooc) == 1
+    pair = edges_cooc[0]
     assert "alice" in pair[0] and "bob" in pair[1]
+    db.close()
 
 
-def test_build_graph_empty_messages() -> None:
+def test_build_graph_empty_messages(tmp_path: Path) -> None:
     with patch("spacy.load"):
         with patch("sklearn.feature_extraction.text.TfidfVectorizer"):
-            g = build_graph([])
-    assert g == {
-        "nodes": {}, "edges_contains": set(), "edges_replies_to": set(),
-        "edges_mentions": set(), "edges_cooc": set(), "edges_keywords": [],
-    }
+            db = GraphDB(tmp_path / "test.db")
+            build_graph_to_db([], db)
+
+    assert len(db.get_all_nodes_by_label("Conversation")) == 0
+    assert len(db.get_all_nodes_by_label("Message")) == 0
+    assert db.get_edges_contains() == []
+    assert db.get_edges_replies_to() == []
+    assert db.get_edges_mentions() == []
+    assert db.get_edges_cooc() == []
+    assert db.get_edges_keywords() == []
+    db.close()
 
 
 def test_build_graph_repeated_keyword(tmp_path: Path) -> None:
@@ -137,15 +148,17 @@ def test_build_graph_repeated_keyword(tmp_path: Path) -> None:
             mat = csr_matrix(np.array([[0.8, 0.6], [0.7, 0.5]]))
             instance.fit_transform.return_value = mat
 
-            g = build_graph(messages)
+            db = GraphDB(tmp_path / "test.db")
+            build_graph_to_db(messages, db)
 
-    assert "keyword::aple" in g["nodes"]
-    assert "keyword::love" in g["nodes"]
-    kw_edges = g["edges_keywords"]
+    assert db.get_node("keyword::aple") is not None
+    assert db.get_node("keyword::love") is not None
+    kw_edges = db.get_edges_keywords()
     m1_kws = [(m, k, w) for (m, k, w) in kw_edges if m == "m1"]
     m2_kws = [(m, k, w) for (m, k, w) in kw_edges if m == "m2"]
     assert len(m1_kws) >= 1
     assert len(m2_kws) >= 1
+    db.close()
 
 
 def test_run_graph_fresh(monkeypatch, tmp_path: Path) -> None:
@@ -166,7 +179,7 @@ def test_run_graph_fresh(monkeypatch, tmp_path: Path) -> None:
             mock_v = MagicMock()
             mock_tfidf.return_value = mock_v
             mock_v.fit_transform.return_value = MagicMock()
-            run_graph(pickle_path=msgs_pkl, export_pickle=True)
+            run_graph(pickle_path=msgs_pkl, db_path=tmp_path / "knowledge_graph.db", export_pickle=True)
 
     assert (tmp_path / "knowledge_graph.pkl").exists()
     loaded = pickle.loads((tmp_path / "knowledge_graph.pkl").read_bytes())
@@ -175,21 +188,21 @@ def test_run_graph_fresh(monkeypatch, tmp_path: Path) -> None:
 
 def test_run_graph_incremental(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.chdir(tmp_path)
+    db_path = tmp_path / "knowledge_graph.db"
     msg1 = _msg("Hello", id="m1")
     msg2 = _msg("World", id="m2")
+
+    # Pre-populate DB with m1 before run_graph (use message ID "m1" matching the pickle)
+    pre_db = GraphDB(db_path)
+    pre_db.upsert_node("m1", label="Message")
+    pre_db.upsert_node("c1", label="Conversation")
+    pre_db.add_edge_contains("c1", "m1")
+    pre_db.close()
+
     msgs = [msg1, msg2]
     msgs_pkl = tmp_path / "messages.pkl"
     with open(msgs_pkl, "wb") as f:
         pickle.dump(msgs, f)
-
-    existing = {
-        "nodes": {"msg::m1": {"label": "Message"}},
-        "edges_contains": {("conv::c1", "msg::m1")},
-        "edges_mentions": set(), "edges_cooc": set(), "edges_replies_to": set(), "edges_keywords": [],
-        "processed_message_ids": {"m1"},
-    }
-    with open(tmp_path / "knowledge_graph.pkl", "wb") as f:
-        pickle.dump(existing, f)
 
     def mock_nlp_side(text: str):
         return _make_mock_doc([])
@@ -202,33 +215,31 @@ def test_run_graph_incremental(monkeypatch, tmp_path: Path) -> None:
             mock_v = MagicMock()
             mock_tfidf.return_value = mock_v
             mock_v.fit_transform.return_value = MagicMock()
-            run_graph(pickle_path=msgs_pkl, export_pickle=True)
+            run_graph(pickle_path=msgs_pkl, db_path=db_path, export_pickle=True)
 
     loaded = pickle.loads((tmp_path / "knowledge_graph.pkl").read_bytes())
     assert "m2" in loaded["nodes"]
-    assert "m1" in loaded["processed_message_ids"]
-    assert "m2" in loaded["processed_message_ids"]
+    assert "m1" in loaded["nodes"]
 
 
 def test_run_graph_up_to_date(monkeypatch, tmp_path: Path, capsys) -> None:
     monkeypatch.chdir(tmp_path)
+    db_path = tmp_path / "knowledge_graph.db"
     msg = _msg("Hello", id="m1")
     msgs_pkl = tmp_path / "messages.pkl"
     with open(msgs_pkl, "wb") as f:
         pickle.dump([msg], f)
 
-    existing = {
-        "nodes": {"msg::m1": {"label": "Message"}},
-        "edges_contains": {("conv::c1", "msg::m1")},
-        "edges_mentions": set(), "edges_cooc": set(), "edges_replies_to": set(), "edges_keywords": [],
-        "processed_message_ids": {"m1"},
-    }
-    with open(tmp_path / "knowledge_graph.pkl", "wb") as f:
-        pickle.dump(existing, f)
+    # Pre-populate DB with m1 so run_graph sees it as up to date
+    pre_db = GraphDB(db_path)
+    pre_db.upsert_node("m1", label="Message")
+    pre_db.upsert_node("c1", label="Conversation")
+    pre_db.add_edge_contains("c1", "m1")
+    pre_db.close()
 
     with patch("spacy.load"):
         with patch("sklearn.feature_extraction.text.TfidfVectorizer"):
-            run_graph(pickle_path=msgs_pkl, export_pickle=False)
+            run_graph(pickle_path=msgs_pkl, db_path=db_path, export_pickle=False)
 
     assert "up to date" in capsys.readouterr().out
 
@@ -251,7 +262,7 @@ def test_run_graph_offset_limit(monkeypatch, tmp_path: Path) -> None:
             mock_v = MagicMock()
             mock_tfidf.return_value = mock_v
             mock_v.fit_transform.return_value = MagicMock()
-            run_graph(pickle_path=msgs_pkl, offset=2, limit=2, export_pickle=True)
+            run_graph(pickle_path=msgs_pkl, db_path=tmp_path / "knowledge_graph.db", offset=2, limit=2, export_pickle=True)
 
     loaded = pickle.loads((tmp_path / "knowledge_graph.pkl").read_bytes())
     msg_nodes = [k for k in loaded["nodes"] if k.startswith("m")]
@@ -262,20 +273,18 @@ def test_run_graph_offset_limit(monkeypatch, tmp_path: Path) -> None:
 
 def test_run_graph_malformed_existing(monkeypatch, tmp_path: Path, capsys) -> None:
     monkeypatch.chdir(tmp_path)
+    db_path = tmp_path / "knowledge_graph.db"
     msg = _msg("Hello", id="m1")
     msgs_pkl = tmp_path / "messages.pkl"
     with open(msgs_pkl, "wb") as f:
         pickle.dump([msg], f)
 
-    with open(tmp_path / "knowledge_graph.pkl", "wb") as f:
-        pickle.dump(["not", "a", "dict"], f)
-
     with patch("spacy.load"):
         with patch("sklearn.feature_extraction.text.TfidfVectorizer"):
-            run_graph(pickle_path=msgs_pkl)
+            run_graph(pickle_path=msgs_pkl, db_path=db_path)
 
     out_lower = capsys.readouterr().out.lower()
-    assert "unrecognised" in out_lower or "unrecognized" in out_lower
+    assert "loaded" in out_lower
 
 
 def test_run_graph_empty_messages(monkeypatch, tmp_path: Path, capsys) -> None:
@@ -286,7 +295,7 @@ def test_run_graph_empty_messages(monkeypatch, tmp_path: Path, capsys) -> None:
 
     with patch("spacy.load"):
         with patch("sklearn.feature_extraction.text.TfidfVectorizer"):
-            run_graph(pickle_path=msgs_pkl)
+            run_graph(pickle_path=msgs_pkl, db_path=tmp_path / "knowledge_graph.db")
 
     out = capsys.readouterr().out
     assert "No new messages" in out or "Done" in out

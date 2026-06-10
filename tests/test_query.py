@@ -4,6 +4,7 @@ import argparse
 import pickle
 from pathlib import Path
 
+from convo_tools._graph_db import GraphDB
 from convo_tools._query import run_query
 
 
@@ -37,15 +38,17 @@ def _messages() -> list[dict]:
 
 
 def test_query_keyword_mode(tmp_path: Path, capsys) -> None:
-    pkl_g = tmp_path / "graph.pkl"
+    db_path = tmp_path / "test.db"
+    db = GraphDB(db_path)
+    db.add_graph_batch(_graph())
+    db.close()
+
     pkl_m = tmp_path / "messages.pkl"
-    with open(pkl_g, "wb") as f:
-        pickle.dump(_graph(), f)
     with open(pkl_m, "wb") as f:
         pickle.dump(_messages(), f)
 
-    args = argparse.Namespace(query="fibonacci", graph=pkl_g, messages=pkl_m, llm=False, top=10, max_context=50000, output=None)
-    run_query(args)
+    args = argparse.Namespace(query="fibonacci", messages=pkl_m, llm=False, top=10, max_context=50000, output=None)
+    run_query(db_path, args)
     out = capsys.readouterr().out
     assert "fibonacci" in out.lower()
 
@@ -57,10 +60,12 @@ def test_query_text_fallback(tmp_path: Path, capsys) -> None:
         "edges_contains": {("conv::c1", "msg::1")},
         "edges_replies_to": set(), "edges_cooc": set(), "edges_keywords": [],
     }
-    pkl_g = tmp_path / "graph.pkl"
+    db_path = tmp_path / "test.db"
+    db = GraphDB(db_path)
+    db.add_graph_batch(g)
+    db.close()
+
     pkl_m = tmp_path / "messages.pkl"
-    with open(pkl_g, "wb") as f:
-        pickle.dump(g, f)
     with open(pkl_m, "wb") as f:
         pickle.dump([
             {"id": "msg::1", "conversation_id": "conv::c1", "role": "user", "text": "Alice likes apples and bananas", "create_time": 1000.0},
@@ -70,32 +75,35 @@ def test_query_text_fallback(tmp_path: Path, capsys) -> None:
             {"id": "msg::5", "conversation_id": "conv::c1", "role": "user", "text": "Bananas are yellow fruits", "create_time": 1004.0},
         ], f)
 
-    args = argparse.Namespace(query="apples", graph=pkl_g, messages=pkl_m, llm=False, top=10, max_context=50000, output=None)
-    run_query(args)
+    args = argparse.Namespace(query="apples", messages=pkl_m, llm=False, top=10, max_context=50000, output=None)
+    run_query(db_path, args)
     out = capsys.readouterr().out
     assert "apple" in out or "Alice" in out
 
 
 def test_query_csv(tmp_path: Path) -> None:
-    pkl_g = tmp_path / "graph.pkl"
+    db_path = tmp_path / "test.db"
+    db = GraphDB(db_path)
+    db.add_graph_batch(_graph())
+    db.close()
+
     pkl_m = tmp_path / "messages.pkl"
-    with open(pkl_g, "wb") as f:
-        pickle.dump(_graph(), f)
     with open(pkl_m, "wb") as f:
         pickle.dump(_messages(), f)
     out_csv = tmp_path / "out.csv"
 
-    args = argparse.Namespace(query="fibonacci", graph=pkl_g, messages=pkl_m, llm=False, top=10, max_context=50000, output=out_csv)
-    run_query(args)
+    args = argparse.Namespace(query="fibonacci", messages=pkl_m, llm=False, top=10, max_context=50000, output=out_csv)
+    run_query(db_path, args)
     assert out_csv.exists()
 
 
 def test_query_no_messages_pickle(tmp_path: Path, capsys) -> None:
-    pkl_g = tmp_path / "graph.pkl"
-    with open(pkl_g, "wb") as f:
-        pickle.dump(_graph(), f)
+    db_path = tmp_path / "test.db"
+    db = GraphDB(db_path)
+    db.add_graph_batch(_graph())
+    db.close()
 
-    args = argparse.Namespace(query="fibonacci", graph=pkl_g, messages=Path("/nonexistent/pkl"), llm=False, top=10, max_context=50000, output=None)
-    run_query(args)
+    args = argparse.Namespace(query="fibonacci", messages=Path("/nonexistent/pkl"), llm=False, top=10, max_context=50000, output=None)
+    run_query(db_path, args)
     out = capsys.readouterr().out
     assert "fibonacci" in out.lower() or "matching" in out

@@ -1,49 +1,35 @@
 from __future__ import annotations
 
 import csv
-import pickle
 import sys
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     import argparse
-    from typing import Any
+    from pathlib import Path
 
 import networkx as nx
 
-
-def _entity_name(entity_id: str, nodes: dict[str, Any]) -> str:
-    return nodes.get(entity_id, {}).get("name") or entity_id.split("::", 2)[-1]
+from convo_tools._graph_db import GraphDB
 
 
-def _entity_type(entity_id: str, nodes: dict[str, Any]) -> str:
-    return nodes.get(entity_id, {}).get("entity_type") or entity_id.split("::")[1] if "::" in entity_id else ""
+def _entity_name(entity_id: str, db: GraphDB) -> str:
+    node = db.get_node(entity_id)
+    if node:
+        return node.get("name") or entity_id.split("::", 2)[-1]
+    return entity_id.split("::", 2)[-1]
 
 
-def run_centrality(args: argparse.Namespace) -> None:
-    with open(args.pickle_path, "rb") as f:
-        graph = pickle.load(f)
+def _entity_type(entity_id: str, db: GraphDB) -> str:
+    node = db.get_node(entity_id)
+    if node:
+        return node.get("entity_type") or (entity_id.split("::")[1] if "::" in entity_id else "")
+    return entity_id.split("::")[1] if "::" in entity_id else ""
 
-    if not isinstance(graph, dict) or "nodes" not in graph:
-        print("Error: graph pickle missing 'nodes' key", file=sys.stderr)
-        return
 
-    nodes = graph.get("nodes", {})
-    edges_cooc = graph.get("edges_cooc", set())
-
-    entity_ids = {
-        eid for eid in nodes
-        if nodes[eid].get("label") == "Entity"
-    }
-
-    g = nx.Graph()
-    g.add_nodes_from(entity_ids)
-
-    edge_count = 0
-    for a, b in edges_cooc:
-        if a in entity_ids and b in entity_ids:
-            g.add_edge(a, b)
-            edge_count += 1
+def run_centrality(db_path: str | Path, args: argparse.Namespace) -> None:
+    db = GraphDB(db_path)
+    g = db.build_entity_cooc_graph()
 
     n = g.number_of_nodes()
     m = g.number_of_edges()
@@ -52,6 +38,7 @@ def run_centrality(args: argparse.Namespace) -> None:
 
     if n < 2:
         print("Graph too small for meaningful centrality.")
+        db.close()
         return
 
     largest = max(nx.connected_components(g), key=len)
@@ -81,8 +68,8 @@ def run_centrality(args: argparse.Namespace) -> None:
     print(f"  {'entity':36s} {'type':12s} {'centrality':>12s} {'degree':>6s}")
     print(f"  {'─'*36} {'─'*12} {'─'*12} {'─'*6}")
     for entity_id, score in sorted_cent[: args.top]:
-        name = _entity_name(entity_id, nodes)[:36]
-        etype = _entity_type(entity_id, nodes)[:12]
+        name = _entity_name(entity_id, db)[:36]
+        etype = _entity_type(entity_id, db)[:12]
         deg = lg.degree(entity_id)
         print(f"  {name:36s} {etype:12s} {score:>12.5f} {deg:>6d}")
 
@@ -91,8 +78,10 @@ def run_centrality(args: argparse.Namespace) -> None:
             w = csv.writer(f)
             w.writerow(["entity_id", "name", "entity_type", "betweenness", "degree"])
             for entity_id, score in sorted_cent:
-                name = _entity_name(entity_id, nodes)
-                etype = _entity_type(entity_id, nodes)
+                name = _entity_name(entity_id, db)
+                etype = _entity_type(entity_id, db)
                 deg = lg.degree(entity_id)
                 w.writerow([entity_id, name, etype, f"{score:.6f}", str(deg)])
         print(f"\nWrote {args.output} ({len(sorted_cent)} entities)")
+
+    db.close()

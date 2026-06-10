@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from convo_tools._graph_db import GraphDB
 from convo_tools._ingest import run_ingest
 
 kuzu = pytest.importorskip("kuzu")
@@ -35,7 +36,7 @@ def test_ingest_basic(tmp_path: Path, capsys) -> None:
         pickle.dump(_graph(), f)
     db = tmp_path / "test_db"
 
-    args = argparse.Namespace(pickle_path=pkl, db_path=db, overwrite=False)
+    args = argparse.Namespace(pickle_path=pkl, db=None, kuzu_path=db, overwrite=False)
     run_ingest(args)
     assert db.exists()
 
@@ -46,12 +47,23 @@ def test_ingest_overwrite(tmp_path: Path) -> None:
         pickle.dump(_graph(), f)
     db = tmp_path / "test_db2"
 
-    args = argparse.Namespace(pickle_path=pkl, db_path=db, overwrite=True)
+    args = argparse.Namespace(pickle_path=pkl, db=None, kuzu_path=db, overwrite=True)
     run_ingest(args)
     assert db.exists()
-    # Overwrite again
     run_ingest(args)
     assert db.exists()
+
+
+def test_ingest_from_db(tmp_path: Path) -> None:
+    graph_db_path = tmp_path / "knowledge_graph.db"
+    gdb = GraphDB(graph_db_path)
+    gdb.add_graph_batch(_graph())
+    gdb.close()
+
+    kuzu_path = tmp_path / "test_kuzu_db"
+    args = argparse.Namespace(pickle_path=None, db=graph_db_path, kuzu_path=kuzu_path, overwrite=False)
+    run_ingest(args)
+    assert kuzu_path.exists()
 
 
 def test_ingest_small(tmp_path: Path, capsys) -> None:
@@ -65,6 +77,6 @@ def test_ingest_small(tmp_path: Path, capsys) -> None:
         pickle.dump(g, f)
     db = tmp_path / "tiny_db"
 
-    args = argparse.Namespace(pickle_path=pkl, db_path=db, overwrite=False)
+    args = argparse.Namespace(pickle_path=pkl, db=None, kuzu_path=db, overwrite=False)
     run_ingest(args)
     assert db.exists()

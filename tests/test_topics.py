@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import argparse
-import pickle
 from pathlib import Path
 
+from convo_tools._graph_db import GraphDB
 from convo_tools._topics import run_topics
 
 
@@ -40,37 +40,39 @@ def _graph() -> dict:
 
 
 def test_topics_basic(tmp_path: Path, capsys) -> None:
-    pkl = tmp_path / "graph.pkl"
-    with open(pkl, "wb") as f:
-        pickle.dump(_graph(), f)
+    db_path = tmp_path / "test.db"
+    db = GraphDB(db_path)
+    db.add_graph_batch(_graph())
+    db.close()
 
-    args = argparse.Namespace(pickle_path=pkl, top=10, min_size=2, output=None)
-    run_topics(args)
+    args = argparse.Namespace(top=10, min_size=2, output=None)
+    run_topics(db_path, args)
     out = capsys.readouterr().out
     assert "Cluster" in out or "cluster" in out or "community" in out
 
 
 def test_topics_csv(tmp_path: Path) -> None:
-    pkl = tmp_path / "graph.pkl"
-    with open(pkl, "wb") as f:
-        pickle.dump(_graph(), f)
-    out_csv = tmp_path / "out.csv"
+    db_path = tmp_path / "test.db"
+    db = GraphDB(db_path)
+    db.add_graph_batch(_graph())
+    db.close()
 
-    args = argparse.Namespace(pickle_path=pkl, top=10, min_size=2, output=out_csv)
-    run_topics(args)
+    out_csv = tmp_path / "out.csv"
+    args = argparse.Namespace(top=10, min_size=2, output=out_csv)
+    run_topics(db_path, args)
     assert out_csv.exists()
 
 
 def test_topics_too_small(tmp_path: Path, capsys) -> None:
-    g = {
+    db_path = tmp_path / "test.db"
+    db = GraphDB(db_path)
+    db.add_graph_batch({
         "nodes": {"e1": {"label": "Entity", "name": "e1", "entity_type": "PERSON"}},
         "edges_cooc": set(), "edges_mentions": set(), "edges_contains": set(),
         "edges_replies_to": set(), "edges_keywords": [],
-    }
-    pkl = tmp_path / "graph.pkl"
-    with open(pkl, "wb") as f:
-        pickle.dump(g, f)
+    })
+    db.close()
 
-    args = argparse.Namespace(pickle_path=pkl, top=10, min_size=3, output=None)
-    run_topics(args)
+    args = argparse.Namespace(top=10, min_size=3, output=None)
+    run_topics(db_path, args)
     assert "too small" in capsys.readouterr().out

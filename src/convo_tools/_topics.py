@@ -1,51 +1,39 @@
 from __future__ import annotations
 
 import csv
-import pickle
 import sys
-from collections import Counter, defaultdict
+from collections import Counter
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     import argparse
-    from typing import Any
 
 import networkx as nx
 
-
-def _entity_name(entity_id: str, nodes: dict[str, Any]) -> str:
-    return nodes.get(entity_id, {}).get("name") or entity_id.split("::", 2)[-1]
+from convo_tools._graph_db import GraphDB
 
 
-def _entity_type(entity_id: str, nodes: dict[str, Any]) -> str:
-    return nodes.get(entity_id, {}).get("entity_type") or (
-        entity_id.split("::")[1] if "::" in entity_id else ""
-    )
+def _entity_name(entity_id: str, db: GraphDB) -> str:
+    node = db.get_node(entity_id)
+    if node and node.get("name"):
+        return node["name"]
+    return entity_id.split("::", 2)[-1]
 
 
-def run_topics(args: argparse.Namespace) -> None:
-    with open(args.pickle_path, "rb") as f:
-        graph = pickle.load(f)
+def _entity_type(entity_id: str, db: GraphDB) -> str:
+    node = db.get_node(entity_id)
+    if node and node.get("entity_type"):
+        return node["entity_type"]
+    if "::" in entity_id:
+        return entity_id.split("::")[1]
+    return ""
 
-    if not isinstance(graph, dict) or "nodes" not in graph:
-        print("Error: graph pickle missing 'nodes' key", file=sys.stderr)
-        return
 
-    nodes = graph.get("nodes", {})
-    edges_cooc = graph.get("edges_cooc", set())
-    edges_mentions = graph.get("edges_mentions", set())
-    edges_keywords = graph.get("edges_keywords", [])
+def run_topics(db_path: str | Path, args: argparse.Namespace) -> None:
+    db = GraphDB(db_path)
 
-    entity_ids = {nid for nid, attrs in nodes.items() if attrs.get("label") == "Entity"}
-
-    g = nx.Graph()
-    g.add_nodes_from(entity_ids)
-
-    edge_count = 0
-    for a, b in edges_cooc:
-        if a in entity_ids and b in entity_ids:
-            g.add_edge(a, b)
-            edge_count += 1
+    g = db.build_entity_cooc_graph()
 
     n = g.number_of_nodes()
     m = g.number_of_edges()
@@ -53,6 +41,7 @@ def run_topics(args: argparse.Namespace) -> None:
 
     if n < 2:
         print("Graph too small for community detection.")
+        db.close()
         return
 
     components = sorted(nx.connected_components(g), key=len, reverse=True)
@@ -61,6 +50,7 @@ def run_topics(args: argparse.Namespace) -> None:
 
     if not large_components:
         print("No component large enough for meaningful community detection (need >= 3).")
+        db.close()
         return
 
     communities: list[frozenset[str]] = []
@@ -77,14 +67,8 @@ def run_topics(args: argparse.Namespace) -> None:
     print()
     min_size = args.min_size
 
-    # ── Precompute per-message keyword sets for TF-IDF cross-ref ──
-    msg_keywords: dict[str, set[str]] = defaultdict(set)
-    for msg_id, kw_id, _w in edges_keywords:
-        msg_keywords[msg_id].add(kw_id)
-
-    entity_msgs: dict[str, set[str]] = defaultdict(set)
-    for msg_id, eid in edges_mentions:
-        entity_msgs[eid].add(msg_id)
+    msg_keywords = db.get_message_keywords()
+    entity_msgs = db.get_entity_messages()
 
     display_idx = 0
     for i, comm in enumerate(communities):
@@ -92,15 +76,13 @@ def run_topics(args: argparse.Namespace) -> None:
             continue
         display_idx += 1
 
-        # Top entities by degree within cluster
         comm_g = g.subgraph(comm)
         deg = dict(comm_g.degree())
         top = sorted(deg.items(), key=lambda x: -x[1])[: args.top]
 
-        # Entity type distribution
         type_counts: Counter[str] = Counter()
         for eid in comm:
-            type_counts[_entity_type(eid, nodes)] += 1
+            type_counts[_entity_type(eid, db)] += 1
 
         print(f"Cluster {display_idx} ({len(comm)} entities, {comm_g.number_of_edges()} internal edges)")
         type_summary = " | ".join(
@@ -109,15 +91,13 @@ def run_topics(args: argparse.Namespace) -> None:
         if type_summary:
             print(f"  Types: {type_summary}")
 
-        # Entity names
         names = []
         for eid, d in top:
-            names.append(f"{_entity_name(eid, nodes)[:30]} (deg={d})")
+            names.append(f"{_entity_name(eid, db)[:30]} (deg={d})")
         print("  Top entities:")
         for line in names:
             print(f"    {line}")
 
-        # Cross-ref: characteristic keywords
         cluster_msgs: set[str] = set()
         for eid in comm:
             cluster_msgs |= entity_msgs.get(eid, set())
@@ -125,7 +105,7 @@ def run_topics(args: argparse.Namespace) -> None:
         kw_counter: Counter[str] = Counter()
         for mid in cluster_msgs:
             for kw_id in msg_keywords.get(mid, set()):
-                name = _entity_name(kw_id, nodes)
+                name = _entity_name(kw_id, db)
                 if name:
                     kw_counter[name] += 1
 
@@ -136,7 +116,6 @@ def run_topics(args: argparse.Namespace) -> None:
 
         print()
 
-    # ── CSV output ──
     if args.output:
         with open(args.output, "w", newline="", encoding="utf-8") as f:
             w = csv.writer(f)
@@ -151,9 +130,11 @@ def run_topics(args: argparse.Namespace) -> None:
                 for eid in sorted(comm):
                     w.writerow([
                         eid,
-                        _entity_name(eid, nodes),
-                        _entity_type(eid, nodes),
+                        _entity_name(eid, db),
+                        _entity_type(eid, db),
                         row_idx,
                         deg.get(eid, 0),
                     ])
         print(f"Wrote {args.output}")
+
+    db.close()

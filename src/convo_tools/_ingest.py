@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import pickle
 import sys
 from typing import TYPE_CHECKING
 
@@ -9,7 +8,9 @@ if TYPE_CHECKING:
     import argparse
     from typing import Any
 
-SCHEMA_SQL = """
+from convo_tools._graph_db import GraphDB
+
+KUZU_SCHEMA_SQL = """
 CREATE NODE TABLE IF NOT EXISTS Conversation (
     id STRING, label STRING, PRIMARY KEY (id)
 );
@@ -79,7 +80,7 @@ def graph_to_kuzu(graph_data: dict[str, Any], db_path: str, overwrite: bool = Fa
     db = kuzu.Database(db_path)
     conn = kuzu.Connection(db)
 
-    for stmt in SCHEMA_SQL.strip().split(";"):
+    for stmt in KUZU_SCHEMA_SQL.strip().split(";"):
         s = stmt.strip()
         if s:
             conn.execute(s + ";")
@@ -150,11 +151,17 @@ def graph_to_kuzu(graph_data: dict[str, Any], db_path: str, overwrite: bool = Fa
 
 
 def run_ingest(args: argparse.Namespace) -> None:
-    with open(args.pickle_path, "rb") as f:
-        graph_data = pickle.load(f)
+    if args.pickle_path:
+        import pickle
+        with open(args.pickle_path, "rb") as f:
+            graph_data = pickle.load(f)
+    else:
+        db = GraphDB(args.db)
+        graph_data = db.to_pickle()
+        db.close()
 
     if not isinstance(graph_data, dict) or "nodes" not in graph_data:
-        print("Error: graph pickle missing 'nodes' key", file=sys.stderr)
+        print("Error: graph data missing 'nodes' key", file=sys.stderr)
         return
 
-    graph_to_kuzu(graph_data, str(args.db_path), overwrite=args.overwrite)
+    graph_to_kuzu(graph_data, str(args.kuzu_path), overwrite=args.overwrite)

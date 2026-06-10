@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 import csv
-import pickle
 import sys
 from collections import Counter, defaultdict
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     import argparse
+
+from convo_tools._graph_db import GraphDB
 
 
 def _time_bucket(ts: float | None, freq: str) -> str:
@@ -24,15 +26,12 @@ def _time_bucket(ts: float | None, freq: str) -> str:
     return dt.strftime("%Y-%m")
 
 
-def run_timeline(args: argparse.Namespace) -> None:
-    with open(args.graph, "rb") as f:
-        graph = pickle.load(f)
-    with open(args.messages, "rb") as f:
-        messages: list[dict[str, Any]] = pickle.load(f)
+def run_timeline(db_path: str | Path, args: argparse.Namespace) -> None:
+    db = GraphDB(db_path)
 
-    if not isinstance(graph, dict) or "nodes" not in graph:
-        print("Error: graph pickle missing 'nodes' key", file=sys.stderr)
-        return
+    with open(args.messages, "rb") as f:
+        import pickle
+        messages: list[dict[str, Any]] = pickle.load(f)
 
     msg_timestamps: dict[str, float | None] = {}
     for m in messages:
@@ -46,9 +45,7 @@ def run_timeline(args: argparse.Namespace) -> None:
             file=sys.stderr,
         )
 
-    edges_mentions = graph.get("edges_mentions", set())
-    nodes = graph.get("nodes", {})
-
+    edges_mentions = db.get_edges_mentions()
     bucket_counts: dict[str, Counter[str]] = defaultdict(Counter)
 
     for msg_id, entity_id in edges_mentions:
@@ -68,7 +65,8 @@ def run_timeline(args: argparse.Namespace) -> None:
         top = bucket_counts[bucket].most_common(args.top)
         parts = []
         for entity_id, count in top:
-            name = nodes.get(entity_id, {}).get("name") or entity_id.split("::", 2)[-1]
+            node = db.get_node(entity_id)
+            name = (node or {}).get("name") or entity_id.split("::", 2)[-1]
             parts.append(f"{name[:28]:28s} {count:4d}")
         print(f"  {bucket}  |  {'  |  '.join(parts)}")
 
@@ -83,7 +81,8 @@ def run_timeline(args: argparse.Namespace) -> None:
 
         header_names = []
         for eid in top_overall:
-            name = nodes.get(eid, {}).get("name") or eid.split("::", 2)[-1]
+            node = db.get_node(eid)
+            name = (node or {}).get("name") or eid.split("::", 2)[-1]
             header_names.append(name)
 
         with open(args.output, "w", newline="", encoding="utf-8") as f:
@@ -96,3 +95,5 @@ def run_timeline(args: argparse.Namespace) -> None:
                 w.writerow(row)
 
         print(f"\nWrote {args.output} ({len(sorted_buckets)} rows x {len(header_names)} entity columns)")
+
+    db.close()

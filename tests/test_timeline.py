@@ -4,6 +4,7 @@ import argparse
 import pickle
 from pathlib import Path
 
+from convo_tools._graph_db import GraphDB
 from convo_tools._timeline import run_timeline
 
 
@@ -37,47 +38,53 @@ def _messages(ts: float) -> list[dict]:
 
 def test_timeline_basic(tmp_path: Path, capsys) -> None:
     g = _graph()
-    pkl_g = tmp_path / "graph.pkl"
+    db_path = tmp_path / "test.db"
+    db = GraphDB(db_path)
+    db.add_graph_batch(g)
+    db.close()
+
     pkl_m = tmp_path / "messages.pkl"
-    with open(pkl_g, "wb") as f:
-        pickle.dump(g, f)
     with open(pkl_m, "wb") as f:
         pickle.dump(_messages(1_000_000.0), f)
 
-    args = argparse.Namespace(graph=pkl_g, messages=pkl_m, top=5, freq="year", output=None)
-    run_timeline(args)
+    args = argparse.Namespace(messages=pkl_m, top=5, freq="year", output=None)
+    run_timeline(db_path, args)
     out = capsys.readouterr().out
     assert "alice" in out
 
 
 def test_timeline_csv(tmp_path: Path) -> None:
     g = _graph()
-    pkl_g = tmp_path / "graph.pkl"
+    db_path = tmp_path / "test.db"
+    db = GraphDB(db_path)
+    db.add_graph_batch(g)
+    db.close()
+
     pkl_m = tmp_path / "messages.pkl"
-    with open(pkl_g, "wb") as f:
-        pickle.dump(g, f)
     with open(pkl_m, "wb") as f:
         pickle.dump(_messages(1_000_000.0), f)
     out_csv = tmp_path / "out.csv"
 
-    args = argparse.Namespace(graph=pkl_g, messages=pkl_m, top=5, freq="month", output=out_csv)
-    run_timeline(args)
+    args = argparse.Namespace(messages=pkl_m, top=5, freq="month", output=out_csv)
+    run_timeline(db_path, args)
     assert out_csv.exists()
 
 
 def test_timeline_no_timestamps(tmp_path: Path, capsys) -> None:
     g = _graph()
-    pkl_g = tmp_path / "graph.pkl"
+    db_path = tmp_path / "test.db"
+    db = GraphDB(db_path)
+    db.add_graph_batch(g)
+    db.close()
+
     pkl_m = tmp_path / "messages.pkl"
-    with open(pkl_g, "wb") as f:
-        pickle.dump(g, f)
     with open(pkl_m, "wb") as f:
         pickle.dump(
             [{"id": "msg::1", "conversation_id": "conv::c1", "role": "user", "text": "hi"}],
             f,
         )
 
-    args = argparse.Namespace(graph=pkl_g, messages=pkl_m, top=5, freq="month", output=None)
-    run_timeline(args)
+    args = argparse.Namespace(messages=pkl_m, top=5, freq="month", output=None)
+    run_timeline(db_path, args)
     out = capsys.readouterr().out
     assert "unknown" in out or "alice" in out
