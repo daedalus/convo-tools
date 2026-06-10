@@ -9,6 +9,7 @@ from convo_tools._centrality import run_centrality
 from convo_tools._export import run_export
 from convo_tools._extract import run_extract
 from convo_tools._join import run_join
+from convo_tools._similarity import run_similarity
 from convo_tools._split import run_split
 from convo_tools._timeline import run_timeline
 
@@ -20,7 +21,7 @@ def _build_base_parser() -> argparse.ArgumentParser:
     )
     ap.add_argument(
         "-m", "--mode", required=True,
-        choices=["extract", "graph", "full", "join", "split", "export", "timeline", "centrality"],
+        choices=["extract", "graph", "full", "join", "split", "export", "timeline", "centrality", "similarity"],
         help="Operation mode",
     )
     return ap
@@ -125,6 +126,38 @@ def _build_join_parser() -> argparse.ArgumentParser:
     return ap
 
 
+def _build_similarity_parser() -> argparse.ArgumentParser:
+    ap = argparse.ArgumentParser(
+        prog=f"{sys.argv[0]} -m similarity",
+        description="Find similar conversations by entity/keyword Jaccard.",
+    )
+    ap.add_argument(
+        "graph", nargs="?", type=Path, default=Path("knowledge_graph.pkl"),
+        help="Input knowledge graph pickle (default: knowledge_graph.pkl)",
+    )
+    ap.add_argument(
+        "messages", nargs="?", type=Path, default=Path("messages.pkl"),
+        help="Messages pickle (default: messages.pkl)",
+    )
+    ap.add_argument(
+        "--top", type=int, default=20,
+        help="Show top N similar pairs (default: 20)",
+    )
+    ap.add_argument(
+        "--threshold", type=float, default=0.3,
+        help="Minimum Jaccard score (default: 0.3)",
+    )
+    ap.add_argument(
+        "--all", dest="all", action="store_true",
+        help="Include keywords in similarity (default: entities only)",
+    )
+    ap.add_argument(
+        "-o", "--output", type=Path,
+        help="Output CSV file",
+    )
+    return ap
+
+
 def _build_centrality_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(
         prog=f"{sys.argv[0]} -m centrality",
@@ -216,6 +249,7 @@ def _build_split_parser() -> argparse.ArgumentParser:
 
 PARSERS = {
     "centrality": _build_centrality_parser,
+    "similarity": _build_similarity_parser,
     "export": _build_export_parser,
     "extract": _build_extract_parser,
     "timeline": _build_timeline_parser,
@@ -242,6 +276,8 @@ def main() -> int:
 
     if mode == "centrality":
         run_centrality(args)
+    elif mode == "similarity":
+        run_similarity(args)
     elif mode == "export":
         run_export(args)
     elif mode == "timeline":
