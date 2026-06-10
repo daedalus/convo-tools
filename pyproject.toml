@@ -30,6 +30,9 @@ dev = [
 kuzu = [
     "kuzu",
 ]
+mcp = [
+    "mcp",
+]
 test = [
     "pytest",
     "pytest-cov",
@@ -42,7 +45,7 @@ lint = [
     "lizard",
     "mdformat",
 ]
-all = ["convo-tools[dev,test,lint]"]
+all = ["convo-tools[dev,test,lint,kuzu,mcp]"]
 
 [project.scripts]
 convo-tools = "convo_tools.__main__:main"

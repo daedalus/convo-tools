@@ -14,11 +14,14 @@ from convo_tools._extract import run_extract
 from convo_tools._ingest import run_ingest
 from convo_tools._join import run_join
 from convo_tools._query import run_query
+from convo_tools._serve import run_serve
 from convo_tools._similarity import run_similarity
 from convo_tools._split import run_split
 from convo_tools._temporal import run_temporal
 from convo_tools._timeline import run_timeline
 from convo_tools._topics import run_topics
+
+_P = Path.home() / ".convo-tools"
 
 
 def _build_base_parser() -> argparse.ArgumentParser:
@@ -28,7 +31,7 @@ def _build_base_parser() -> argparse.ArgumentParser:
     )
     ap.add_argument(
         "-m", "--mode", required=True,
-        choices=["extract", "graph", "full", "join", "split", "export", "timeline", "centrality", "similarity", "ingest", "topics", "depth", "diff", "embed", "temporal", "query"],
+        choices=["extract", "graph", "full", "join", "split", "export", "timeline", "centrality", "similarity", "ingest", "topics", "depth", "diff", "embed", "temporal", "query", "serve"],
         help="Operation mode",
     )
     return ap
@@ -41,7 +44,7 @@ def _build_extract_parser() -> argparse.ArgumentParser:
     )
     ap.add_argument("json_dir", type=Path, help="Directory containing .json files")
     ap.add_argument(
-        "pickle_path", nargs="?", type=Path, default=Path("messages.pkl"),
+        "pickle_path", nargs="?", type=Path, default=_P / "messages.pkl",
         help="Output pickle path (default: messages.pkl)",
     )
     return ap
@@ -53,7 +56,7 @@ def _build_graph_parser() -> argparse.ArgumentParser:
         description="Build a knowledge graph from a pickle of extracted messages.",
     )
     ap.add_argument(
-        "pickle_path", nargs="?", type=Path, default=Path("messages.pkl"),
+        "pickle_path", nargs="?", type=Path, default=_P / "messages.pkl",
         help="Input pickle path (default: messages.pkl)",
     )
     ap.add_argument(
@@ -82,7 +85,7 @@ def _build_full_parser() -> argparse.ArgumentParser:
     )
     ap.add_argument("json_dir", type=Path, help="Directory containing .json files")
     ap.add_argument(
-        "pickle_path", nargs="?", type=Path, default=Path("messages.pkl"),
+        "pickle_path", nargs="?", type=Path, default=_P / "messages.pkl",
         help="Intermediate/output pickle path (default: messages.pkl)",
     )
     ap.add_argument(
@@ -139,11 +142,11 @@ def _build_ingest_parser() -> argparse.ArgumentParser:
         description="Ingest knowledge graph into Kuzu property graph database.",
     )
     ap.add_argument(
-        "pickle_path", nargs="?", type=Path, default=Path("knowledge_graph.pkl"),
+        "pickle_path", nargs="?", type=Path, default=_P / "knowledge_graph.pkl",
         help="Input knowledge graph pickle (default: knowledge_graph.pkl)",
     )
     ap.add_argument(
-        "db_path", nargs="?", type=Path, default=Path("knowledge_graph.kzu"),
+        "db_path", nargs="?", type=Path, default=_P / "knowledge_graph.kzu",
         help="Output Kuzu database directory (default: knowledge_graph.kzu)",
     )
     ap.add_argument(
@@ -159,11 +162,11 @@ def _build_similarity_parser() -> argparse.ArgumentParser:
         description="Find similar conversations by entity/keyword Jaccard.",
     )
     ap.add_argument(
-        "graph", nargs="?", type=Path, default=Path("knowledge_graph.pkl"),
+        "graph", nargs="?", type=Path, default=_P / "knowledge_graph.pkl",
         help="Input knowledge graph pickle (default: knowledge_graph.pkl)",
     )
     ap.add_argument(
-        "messages", nargs="?", type=Path, default=Path("messages.pkl"),
+        "messages", nargs="?", type=Path, default=_P / "messages.pkl",
         help="Messages pickle (default: messages.pkl)",
     )
     ap.add_argument(
@@ -191,7 +194,7 @@ def _build_centrality_parser() -> argparse.ArgumentParser:
         description="Find bridge entities via betweenness centrality.",
     )
     ap.add_argument(
-        "pickle_path", nargs="?", type=Path, default=Path("knowledge_graph.pkl"),
+        "pickle_path", nargs="?", type=Path, default=_P / "knowledge_graph.pkl",
         help="Input knowledge graph pickle (default: knowledge_graph.pkl)",
     )
     ap.add_argument(
@@ -220,11 +223,11 @@ def _build_timeline_parser() -> argparse.ArgumentParser:
         description="Entity frequency over time.",
     )
     ap.add_argument(
-        "graph", nargs="?", type=Path, default=Path("knowledge_graph.pkl"),
+        "graph", nargs="?", type=Path, default=_P / "knowledge_graph.pkl",
         help="Input knowledge graph pickle (default: knowledge_graph.pkl)",
     )
     ap.add_argument(
-        "messages", nargs="?", type=Path, default=Path("messages.pkl"),
+        "messages", nargs="?", type=Path, default=_P / "messages.pkl",
         help="Messages pickle with timestamps (default: messages.pkl)",
     )
     ap.add_argument(
@@ -248,11 +251,11 @@ def _build_export_parser() -> argparse.ArgumentParser:
         description="Export knowledge graph to GEXF (Gephi).",
     )
     ap.add_argument(
-        "pickle_path", nargs="?", type=Path, default=Path("knowledge_graph.pkl"),
+        "pickle_path", nargs="?", type=Path, default=_P / "knowledge_graph.pkl",
         help="Input knowledge graph pickle (default: knowledge_graph.pkl)",
     )
     ap.add_argument(
-        "-o", "--output", type=Path, default=Path("knowledge_graph.gexf"),
+        "-o", "--output", type=Path, default=_P / "knowledge_graph.gexf",
         help="Output GEXF file (default: knowledge_graph.gexf)",
     )
     return ap
@@ -264,7 +267,7 @@ def _build_topics_parser() -> argparse.ArgumentParser:
         description="Louvain community detection on entity co-occurrence graph.",
     )
     ap.add_argument(
-        "pickle_path", nargs="?", type=Path, default=Path("knowledge_graph.pkl"),
+        "pickle_path", nargs="?", type=Path, default=_P / "knowledge_graph.pkl",
         help="Input knowledge graph pickle (default: knowledge_graph.pkl)",
     )
     ap.add_argument(
@@ -304,7 +307,7 @@ def _build_embed_parser() -> argparse.ArgumentParser:
         description="Compute spectral message embeddings for similarity search.",
     )
     ap.add_argument(
-        "pickle_path", nargs="?", type=Path, default=Path("knowledge_graph.pkl"),
+        "pickle_path", nargs="?", type=Path, default=_P / "knowledge_graph.pkl",
         help="Input knowledge graph pickle (default: knowledge_graph.pkl)",
     )
     ap.add_argument(
@@ -374,7 +377,7 @@ def _build_depth_parser() -> argparse.ArgumentParser:
         description="Analyze reply-chain depth and branching in conversation DAGs.",
     )
     ap.add_argument(
-        "pickle_path", nargs="?", type=Path, default=Path("knowledge_graph.pkl"),
+        "pickle_path", nargs="?", type=Path, default=_P / "knowledge_graph.pkl",
         help="Input knowledge graph pickle (default: knowledge_graph.pkl)",
     )
     ap.add_argument(
@@ -394,11 +397,11 @@ def _build_temporal_parser() -> argparse.ArgumentParser:
         description="Temporal analysis of entity activity: lifespans, bursts, co-activation.",
     )
     ap.add_argument(
-        "graph", nargs="?", type=Path, default=Path("knowledge_graph.pkl"),
+        "graph", nargs="?", type=Path, default=_P / "knowledge_graph.pkl",
         help="Input knowledge graph pickle (default: knowledge_graph.pkl)",
     )
     ap.add_argument(
-        "messages", nargs="?", type=Path, default=Path("messages.pkl"),
+        "messages", nargs="?", type=Path, default=_P / "messages.pkl",
         help="Messages pickle with timestamps (default: messages.pkl)",
     )
     ap.add_argument(
@@ -430,11 +433,11 @@ def _build_query_parser() -> argparse.ArgumentParser:
         help="Natural language query (e.g. 'What did I conclude about HNSW early termination?')",
     )
     ap.add_argument(
-        "graph", nargs="?", type=Path, default=Path("knowledge_graph.pkl"),
+        "graph", nargs="?", type=Path, default=_P / "knowledge_graph.pkl",
         help="Input knowledge graph pickle (default: knowledge_graph.pkl)",
     )
     ap.add_argument(
-        "messages", nargs="?", type=Path, default=Path("messages.pkl"),
+        "messages", nargs="?", type=Path, default=_P / "messages.pkl",
         help="Messages pickle for text and timestamps (default: messages.pkl)",
     )
     ap.add_argument(
@@ -456,6 +459,22 @@ def _build_query_parser() -> argparse.ArgumentParser:
     return ap
 
 
+def _build_serve_parser() -> argparse.ArgumentParser:
+    ap = argparse.ArgumentParser(
+        prog=f"{sys.argv[0]} -m serve",
+        description="Run the MCP server for LLM-powered knowledge graph querying.",
+    )
+    ap.add_argument(
+        "graph_path", nargs="?", type=Path, default=_P / "knowledge_graph.pkl",
+        help="Input knowledge graph pickle (default: knowledge_graph.pkl)",
+    )
+    ap.add_argument(
+        "--messages", type=Path, default=_P / "messages.pkl",
+        help="Messages pickle for temporal/similarity tools (default: messages.pkl)",
+    )
+    return ap
+
+
 PARSERS = {
     "centrality": _build_centrality_parser,
     "depth": _build_depth_parser,
@@ -466,6 +485,7 @@ PARSERS = {
     "similarity": _build_similarity_parser,
     "temporal": _build_temporal_parser,
     "topics": _build_topics_parser,
+    "serve": _build_serve_parser,
     "export": _build_export_parser,
     "extract": _build_extract_parser,
     "timeline": _build_timeline_parser,
@@ -512,6 +532,11 @@ def main() -> int:
         run_export(args)
     elif mode == "timeline":
         run_timeline(args)
+    elif mode == "serve":
+        run_serve(
+            str(args.graph_path) if args.graph_path else None,
+            str(args.messages) if args.messages else None,
+        )
     elif mode == "join":
         run_join(args)
     elif mode == "split":
