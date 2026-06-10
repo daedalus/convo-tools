@@ -7,6 +7,7 @@ from pathlib import Path
 from convo_tools._builder import run_graph
 from convo_tools._centrality import run_centrality
 from convo_tools._depth import run_depth
+from convo_tools._diff import run_diff
 from convo_tools._export import run_export
 from convo_tools._extract import run_extract
 from convo_tools._ingest import run_ingest
@@ -24,7 +25,7 @@ def _build_base_parser() -> argparse.ArgumentParser:
     )
     ap.add_argument(
         "-m", "--mode", required=True,
-        choices=["extract", "graph", "full", "join", "split", "export", "timeline", "centrality", "similarity", "ingest", "topics", "depth"],
+        choices=["extract", "graph", "full", "join", "split", "export", "timeline", "centrality", "similarity", "ingest", "topics", "depth", "diff"],
         help="Operation mode",
     )
     return ap
@@ -294,6 +295,32 @@ def _build_split_parser() -> argparse.ArgumentParser:
     return ap
 
 
+def _build_diff_parser() -> argparse.ArgumentParser:
+    ap = argparse.ArgumentParser(
+        prog=f"{sys.argv[0]} -m diff",
+        description="Compare two knowledge graphs side-by-side.",
+    )
+    ap.add_argument("left", type=Path, help="Left (reference) knowledge graph pickle")
+    ap.add_argument("right", type=Path, help="Right (comparison) knowledge graph pickle")
+    ap.add_argument(
+        "--left-label", default="left",
+        help="Label for left graph (default: left)",
+    )
+    ap.add_argument(
+        "--right-label", default="right",
+        help="Label for right graph (default: right)",
+    )
+    ap.add_argument(
+        "--top", type=int, default=30,
+        help="Show top N entities by mention-count diff (default: 30)",
+    )
+    ap.add_argument(
+        "-o", "--output", type=Path,
+        help="Output CSV file with per-entity comparison",
+    )
+    return ap
+
+
 def _build_depth_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(
         prog=f"{sys.argv[0]} -m depth",
@@ -317,6 +344,7 @@ def _build_depth_parser() -> argparse.ArgumentParser:
 PARSERS = {
     "centrality": _build_centrality_parser,
     "depth": _build_depth_parser,
+    "diff": _build_diff_parser,
     "ingest": _build_ingest_parser,
     "similarity": _build_similarity_parser,
     "topics": _build_topics_parser,
@@ -348,6 +376,8 @@ def main() -> int:
         run_centrality(args)
     elif mode == "depth":
         run_depth(args)
+    elif mode == "diff":
+        run_diff(args)
     elif mode == "ingest":
         run_ingest(args)
     elif mode == "similarity":
