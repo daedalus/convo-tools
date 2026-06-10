@@ -26,12 +26,14 @@ def extract_messages(conversation: dict[str, Any]) -> list[dict[str, Any]]:
             continue
 
         text = "\n".join(content.get("parts", []))
+        create_time = message.get("create_time")
         messages.append(
             {
                 "id": node_id,
                 "role": role,
                 "text": text,
                 "parent": node.get("parent"),
+                "create_time": create_time,
             }
         )
 

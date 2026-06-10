@@ -9,6 +9,7 @@ from convo_tools._export import run_export
 from convo_tools._extract import run_extract
 from convo_tools._join import run_join
 from convo_tools._split import run_split
+from convo_tools._timeline import run_timeline
 
 
 def _build_base_parser() -> argparse.ArgumentParser:
@@ -18,7 +19,7 @@ def _build_base_parser() -> argparse.ArgumentParser:
     )
     ap.add_argument(
         "-m", "--mode", required=True,
-        choices=["extract", "graph", "full", "join", "split", "export"],
+        choices=["extract", "graph", "full", "join", "split", "export", "timeline"],
         help="Operation mode",
     )
     return ap
@@ -123,6 +124,34 @@ def _build_join_parser() -> argparse.ArgumentParser:
     return ap
 
 
+def _build_timeline_parser() -> argparse.ArgumentParser:
+    ap = argparse.ArgumentParser(
+        prog=f"{sys.argv[0]} -m timeline",
+        description="Entity frequency over time.",
+    )
+    ap.add_argument(
+        "graph", nargs="?", type=Path, default=Path("knowledge_graph.pkl"),
+        help="Input knowledge graph pickle (default: knowledge_graph.pkl)",
+    )
+    ap.add_argument(
+        "messages", nargs="?", type=Path, default=Path("messages.pkl"),
+        help="Messages pickle with timestamps (default: messages.pkl)",
+    )
+    ap.add_argument(
+        "--top", type=int, default=5,
+        help="Show top N entities per bucket (default: 5)",
+    )
+    ap.add_argument(
+        "--freq", default="month", choices=["year", "month", "week", "day"],
+        help="Time bucket frequency (default: month)",
+    )
+    ap.add_argument(
+        "-o", "--output", type=Path,
+        help="Output CSV file (optional)",
+    )
+    return ap
+
+
 def _build_export_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(
         prog=f"{sys.argv[0]} -m export",
@@ -158,6 +187,7 @@ def _build_split_parser() -> argparse.ArgumentParser:
 PARSERS = {
     "export": _build_export_parser,
     "extract": _build_extract_parser,
+    "timeline": _build_timeline_parser,
     "graph": _build_graph_parser,
     "full": _build_full_parser,
     "join": _build_join_parser,
@@ -181,6 +211,8 @@ def main() -> int:
 
     if mode == "export":
         run_export(args)
+    elif mode == "timeline":
+        run_timeline(args)
     elif mode == "join":
         run_join(args)
     elif mode == "split":
