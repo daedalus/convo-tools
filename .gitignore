@@ -31,3 +31,5 @@ convos.pkl
 knowledge_graph.pkl
 memray-table-output.html
 mprofile_*
+coverage.json
+*.npz

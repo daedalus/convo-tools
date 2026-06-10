@@ -1,0 +1,66 @@
+from __future__ import annotations
+
+import argparse
+import pickle
+from pathlib import Path
+
+from convo_tools._depth import run_depth
+
+
+def _graph(reply_edges: set) -> dict:
+    return {
+        "nodes": {
+            "conv::c1": {"label": "Conversation"},
+            "conv::c2": {"label": "Conversation"},
+            "msg::1": {"label": "Message", "role": "user", "text": "First"},
+            "msg::2": {"label": "Message", "role": "assistant", "text": "Reply"},
+            "msg::3": {"label": "Message", "role": "user", "text": "Follow-up"},
+            "msg::4": {"label": "Message", "role": "assistant", "text": "Deep reply"},
+            "msg::5": {"label": "Message", "role": "user", "text": "Orphan"},
+        },
+        "edges_contains": {
+            ("conv::c1", "msg::1"), ("conv::c1", "msg::2"), ("conv::c1", "msg::3"), ("conv::c1", "msg::4"),
+            ("conv::c2", "msg::5"),
+        },
+        "edges_replies_to": reply_edges,
+        "edges_mentions": set(),
+        "edges_cooc": set(),
+        "edges_keywords": [],
+    }
+
+
+def test_depth_basic(tmp_path: Path, capsys) -> None:
+    g = _graph({("msg::1", "msg::2"), ("msg::2", "msg::3"), ("msg::3", "msg::4")})
+    pkl = tmp_path / "graph.pkl"
+    with open(pkl, "wb") as f:
+        pickle.dump(g, f)
+
+    args = argparse.Namespace(pickle_path=pkl, top=20, output=None)
+    run_depth(args)
+    captured = capsys.readouterr().out
+    assert "depth" in captured
+
+
+def test_depth_no_reply_edges(tmp_path: Path, capsys) -> None:
+    g = _graph(set())
+    pkl = tmp_path / "graph.pkl"
+    with open(pkl, "wb") as f:
+        pickle.dump(g, f)
+
+    args = argparse.Namespace(pickle_path=pkl, top=20, output=None)
+    run_depth(args)
+    captured = capsys.readouterr().out
+    assert "No reply edges" in captured
+
+
+def test_depth_csv(tmp_path: Path, capsys) -> None:
+    g = _graph({("msg::1", "msg::2")})
+    pkl = tmp_path / "graph.pkl"
+    with open(pkl, "wb") as f:
+        pickle.dump(g, f)
+    out_csv = tmp_path / "out.csv"
+
+    args = argparse.Namespace(pickle_path=pkl, top=20, output=out_csv)
+    run_depth(args)
+    assert out_csv.exists()
+    assert out_csv.read_text().startswith("conv_id")
