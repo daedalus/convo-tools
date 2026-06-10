@@ -13,6 +13,7 @@ from convo_tools._export import run_export
 from convo_tools._extract import run_extract
 from convo_tools._ingest import run_ingest
 from convo_tools._join import run_join
+from convo_tools._query import run_query
 from convo_tools._similarity import run_similarity
 from convo_tools._split import run_split
 from convo_tools._temporal import run_temporal
@@ -27,7 +28,7 @@ def _build_base_parser() -> argparse.ArgumentParser:
     )
     ap.add_argument(
         "-m", "--mode", required=True,
-        choices=["extract", "graph", "full", "join", "split", "export", "timeline", "centrality", "similarity", "ingest", "topics", "depth", "diff", "embed", "temporal"],
+        choices=["extract", "graph", "full", "join", "split", "export", "timeline", "centrality", "similarity", "ingest", "topics", "depth", "diff", "embed", "temporal", "query"],
         help="Operation mode",
     )
     return ap
@@ -419,12 +420,49 @@ def _build_temporal_parser() -> argparse.ArgumentParser:
     return ap
 
 
+def _build_query_parser() -> argparse.ArgumentParser:
+    ap = argparse.ArgumentParser(
+        prog=f"{sys.argv[0]} -m query",
+        description="Natural language query over conversation history using LLM or keyword search.",
+    )
+    ap.add_argument(
+        "query", type=str,
+        help="Natural language query (e.g. 'What did I conclude about HNSW early termination?')",
+    )
+    ap.add_argument(
+        "graph", nargs="?", type=Path, default=Path("knowledge_graph.pkl"),
+        help="Input knowledge graph pickle (default: knowledge_graph.pkl)",
+    )
+    ap.add_argument(
+        "messages", nargs="?", type=Path, default=Path("messages.pkl"),
+        help="Messages pickle for text and timestamps (default: messages.pkl)",
+    )
+    ap.add_argument(
+        "--llm", action="store_true",
+        help="Use Claude LLM for intelligent summarization (requires ANTHROPIC_API_KEY)",
+    )
+    ap.add_argument(
+        "--top", type=int, default=10,
+        help="Number of top results to show (default: 10, keyword mode only)",
+    )
+    ap.add_argument(
+        "--max-context", type=int, default=50000,
+        help="Maximum context characters for LLM (default: 50000)",
+    )
+    ap.add_argument(
+        "-o", "--output", type=Path,
+        help="Output CSV file with matching messages",
+    )
+    return ap
+
+
 PARSERS = {
     "centrality": _build_centrality_parser,
     "depth": _build_depth_parser,
     "diff": _build_diff_parser,
     "embed": _build_embed_parser,
     "ingest": _build_ingest_parser,
+    "query": _build_query_parser,
     "similarity": _build_similarity_parser,
     "temporal": _build_temporal_parser,
     "topics": _build_topics_parser,
@@ -462,6 +500,8 @@ def main() -> int:
         run_embed(args)
     elif mode == "ingest":
         run_ingest(args)
+    elif mode == "query":
+        run_query(args)
     elif mode == "similarity":
         run_similarity(args)
     elif mode == "temporal":
