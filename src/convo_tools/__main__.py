@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 
 from convo_tools._builder import run_graph
+from convo_tools._export import run_export
 from convo_tools._extract import run_extract
 from convo_tools._join import run_join
 from convo_tools._split import run_split
@@ -17,7 +18,7 @@ def _build_base_parser() -> argparse.ArgumentParser:
     )
     ap.add_argument(
         "-m", "--mode", required=True,
-        choices=["extract", "graph", "full", "join", "split"],
+        choices=["extract", "graph", "full", "join", "split", "export"],
         help="Operation mode",
     )
     return ap
@@ -122,6 +123,22 @@ def _build_join_parser() -> argparse.ArgumentParser:
     return ap
 
 
+def _build_export_parser() -> argparse.ArgumentParser:
+    ap = argparse.ArgumentParser(
+        prog=f"{sys.argv[0]} -m export",
+        description="Export knowledge graph to GEXF (Gephi).",
+    )
+    ap.add_argument(
+        "pickle_path", nargs="?", type=Path, default=Path("knowledge_graph.pkl"),
+        help="Input knowledge graph pickle (default: knowledge_graph.pkl)",
+    )
+    ap.add_argument(
+        "-o", "--output", type=Path, default=Path("knowledge_graph.gexf"),
+        help="Output GEXF file (default: knowledge_graph.gexf)",
+    )
+    return ap
+
+
 def _build_split_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(
         prog=f"{sys.argv[0]} -m split",
@@ -139,6 +156,7 @@ def _build_split_parser() -> argparse.ArgumentParser:
 
 
 PARSERS = {
+    "export": _build_export_parser,
     "extract": _build_extract_parser,
     "graph": _build_graph_parser,
     "full": _build_full_parser,
@@ -161,7 +179,9 @@ def main() -> int:
     remaining = sys.argv[3:]
     args = PARSERS[mode]().parse_args(remaining)
 
-    if mode == "join":
+    if mode == "export":
+        run_export(args)
+    elif mode == "join":
         run_join(args)
     elif mode == "split":
         run_split(args)
