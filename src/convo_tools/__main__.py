@@ -8,6 +8,7 @@ from convo_tools._builder import run_graph
 from convo_tools._centrality import run_centrality
 from convo_tools._depth import run_depth
 from convo_tools._diff import run_diff
+from convo_tools._embed import run_embed
 from convo_tools._export import run_export
 from convo_tools._extract import run_extract
 from convo_tools._ingest import run_ingest
@@ -25,7 +26,7 @@ def _build_base_parser() -> argparse.ArgumentParser:
     )
     ap.add_argument(
         "-m", "--mode", required=True,
-        choices=["extract", "graph", "full", "join", "split", "export", "timeline", "centrality", "similarity", "ingest", "topics", "depth", "diff"],
+        choices=["extract", "graph", "full", "join", "split", "export", "timeline", "centrality", "similarity", "ingest", "topics", "depth", "diff", "embed"],
         help="Operation mode",
     )
     return ap
@@ -295,6 +296,50 @@ def _build_split_parser() -> argparse.ArgumentParser:
     return ap
 
 
+def _build_embed_parser() -> argparse.ArgumentParser:
+    ap = argparse.ArgumentParser(
+        prog=f"{sys.argv[0]} -m embed",
+        description="Compute spectral message embeddings for similarity search.",
+    )
+    ap.add_argument(
+        "pickle_path", nargs="?", type=Path, default=Path("knowledge_graph.pkl"),
+        help="Input knowledge graph pickle (default: knowledge_graph.pkl)",
+    )
+    ap.add_argument(
+        "--dim", type=int, default=32,
+        help="Embedding dimension (default: 32, capped at min(n_messages, n_entities)-1)",
+    )
+    ap.add_argument(
+        "--similar-to", type=str,
+        help="Message ID to find similar messages for",
+    )
+    ap.add_argument(
+        "--top", type=int, default=10,
+        help="Number of similar neighbors to show (default: 10)",
+    )
+    ap.add_argument(
+        "--all", action="store_true",
+        help="Include keywords in the incidence matrix",
+    )
+    ap.add_argument(
+        "--save", type=Path,
+        help="Save embeddings to .npz file",
+    )
+    ap.add_argument(
+        "--load", type=Path,
+        help="Load precomputed embeddings from .npz file",
+    )
+    ap.add_argument(
+        "--n-iter", type=int, default=5,
+        help="SVD iterations (default: 5, higher = more accurate)",
+    )
+    ap.add_argument(
+        "-o", "--output", type=Path,
+        help="Output CSV with nearest neighbors (requires --similar-to)",
+    )
+    return ap
+
+
 def _build_diff_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(
         prog=f"{sys.argv[0]} -m diff",
@@ -345,6 +390,7 @@ PARSERS = {
     "centrality": _build_centrality_parser,
     "depth": _build_depth_parser,
     "diff": _build_diff_parser,
+    "embed": _build_embed_parser,
     "ingest": _build_ingest_parser,
     "similarity": _build_similarity_parser,
     "topics": _build_topics_parser,
@@ -378,6 +424,8 @@ def main() -> int:
         run_depth(args)
     elif mode == "diff":
         run_diff(args)
+    elif mode == "embed":
+        run_embed(args)
     elif mode == "ingest":
         run_ingest(args)
     elif mode == "similarity":

@@ -6,6 +6,7 @@ from convo_tools._builder import build_graph
 from convo_tools._centrality import run_centrality
 from convo_tools._depth import run_depth
 from convo_tools._diff import run_diff
+from convo_tools._embed import run_embed
 from convo_tools._export import graph_to_gexf
 from convo_tools._extract import extract_messages
 from convo_tools._ingest import graph_to_kuzu
@@ -22,6 +23,7 @@ __all__ = [
     "run_centrality",
     "run_depth",
     "run_diff",
+    "run_embed",
     "run_similarity",
     "run_timeline",
     "run_topics",
