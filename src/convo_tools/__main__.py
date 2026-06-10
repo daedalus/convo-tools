@@ -15,6 +15,7 @@ from convo_tools._ingest import run_ingest
 from convo_tools._join import run_join
 from convo_tools._similarity import run_similarity
 from convo_tools._split import run_split
+from convo_tools._temporal import run_temporal
 from convo_tools._timeline import run_timeline
 from convo_tools._topics import run_topics
 
@@ -26,7 +27,7 @@ def _build_base_parser() -> argparse.ArgumentParser:
     )
     ap.add_argument(
         "-m", "--mode", required=True,
-        choices=["extract", "graph", "full", "join", "split", "export", "timeline", "centrality", "similarity", "ingest", "topics", "depth", "diff", "embed"],
+        choices=["extract", "graph", "full", "join", "split", "export", "timeline", "centrality", "similarity", "ingest", "topics", "depth", "diff", "embed", "temporal"],
         help="Operation mode",
     )
     return ap
@@ -386,6 +387,38 @@ def _build_depth_parser() -> argparse.ArgumentParser:
     return ap
 
 
+def _build_temporal_parser() -> argparse.ArgumentParser:
+    ap = argparse.ArgumentParser(
+        prog=f"{sys.argv[0]} -m temporal",
+        description="Temporal analysis of entity activity: lifespans, bursts, co-activation.",
+    )
+    ap.add_argument(
+        "graph", nargs="?", type=Path, default=Path("knowledge_graph.pkl"),
+        help="Input knowledge graph pickle (default: knowledge_graph.pkl)",
+    )
+    ap.add_argument(
+        "messages", nargs="?", type=Path, default=Path("messages.pkl"),
+        help="Messages pickle with timestamps (default: messages.pkl)",
+    )
+    ap.add_argument(
+        "--window", type=int, default=30,
+        help="Sliding window size in days (default: 30)",
+    )
+    ap.add_argument(
+        "--top", type=int, default=20,
+        help="Show top N entities per metric (default: 20)",
+    )
+    ap.add_argument(
+        "--co-activation", action="store_true",
+        help="Show top co-activating entity pairs (same bucket)",
+    )
+    ap.add_argument(
+        "-o", "--output", type=Path,
+        help="Output CSV with per-entity temporal metrics",
+    )
+    return ap
+
+
 PARSERS = {
     "centrality": _build_centrality_parser,
     "depth": _build_depth_parser,
@@ -393,6 +426,7 @@ PARSERS = {
     "embed": _build_embed_parser,
     "ingest": _build_ingest_parser,
     "similarity": _build_similarity_parser,
+    "temporal": _build_temporal_parser,
     "topics": _build_topics_parser,
     "export": _build_export_parser,
     "extract": _build_extract_parser,
@@ -430,6 +464,8 @@ def main() -> int:
         run_ingest(args)
     elif mode == "similarity":
         run_similarity(args)
+    elif mode == "temporal":
+        run_temporal(args)
     elif mode == "topics":
         run_topics(args)
     elif mode == "export":

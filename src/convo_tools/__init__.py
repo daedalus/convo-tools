@@ -11,6 +11,7 @@ from convo_tools._export import graph_to_gexf
 from convo_tools._extract import extract_messages
 from convo_tools._ingest import graph_to_kuzu
 from convo_tools._similarity import run_similarity
+from convo_tools._temporal import run_temporal
 from convo_tools._timeline import run_timeline
 from convo_tools._topics import run_topics
 from convo_tools._util import text_hash
@@ -25,6 +26,7 @@ __all__ = [
     "run_diff",
     "run_embed",
     "run_similarity",
+    "run_temporal",
     "run_timeline",
     "run_topics",
     "text_hash",
