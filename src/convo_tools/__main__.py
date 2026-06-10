@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 
 from convo_tools._builder import run_graph
+from convo_tools._centrality import run_centrality
 from convo_tools._export import run_export
 from convo_tools._extract import run_extract
 from convo_tools._join import run_join
@@ -19,7 +20,7 @@ def _build_base_parser() -> argparse.ArgumentParser:
     )
     ap.add_argument(
         "-m", "--mode", required=True,
-        choices=["extract", "graph", "full", "join", "split", "export", "timeline"],
+        choices=["extract", "graph", "full", "join", "split", "export", "timeline", "centrality"],
         help="Operation mode",
     )
     return ap
@@ -124,6 +125,35 @@ def _build_join_parser() -> argparse.ArgumentParser:
     return ap
 
 
+def _build_centrality_parser() -> argparse.ArgumentParser:
+    ap = argparse.ArgumentParser(
+        prog=f"{sys.argv[0]} -m centrality",
+        description="Find bridge entities via betweenness centrality.",
+    )
+    ap.add_argument(
+        "pickle_path", nargs="?", type=Path, default=Path("knowledge_graph.pkl"),
+        help="Input knowledge graph pickle (default: knowledge_graph.pkl)",
+    )
+    ap.add_argument(
+        "--top", type=int, default=20,
+        help="Show top N entities (default: 20)",
+    )
+    ap.add_argument(
+        "--samples", type=int, default=0,
+        help="Sample size for approximate betweenness "
+        "(0=exact, default=min(500, nodes))",
+    )
+    ap.add_argument(
+        "--exact", action="store_true",
+        help="Force exact computation (may be slow for large graphs)",
+    )
+    ap.add_argument(
+        "-o", "--output", type=Path,
+        help="Output CSV file with all entities",
+    )
+    return ap
+
+
 def _build_timeline_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(
         prog=f"{sys.argv[0]} -m timeline",
@@ -185,6 +215,7 @@ def _build_split_parser() -> argparse.ArgumentParser:
 
 
 PARSERS = {
+    "centrality": _build_centrality_parser,
     "export": _build_export_parser,
     "extract": _build_extract_parser,
     "timeline": _build_timeline_parser,
@@ -209,7 +240,9 @@ def main() -> int:
     remaining = sys.argv[3:]
     args = PARSERS[mode]().parse_args(remaining)
 
-    if mode == "export":
+    if mode == "centrality":
+        run_centrality(args)
+    elif mode == "export":
         run_export(args)
     elif mode == "timeline":
         run_timeline(args)
