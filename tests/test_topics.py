@@ -45,7 +45,7 @@ def test_topics_basic(tmp_path: Path, capsys) -> None:
     db.add_graph_batch(_graph())
     db.close()
 
-    args = argparse.Namespace(top=10, min_size=2, output=None)
+    args = argparse.Namespace(top=10, min_size=2, output=None, min_weight=1)
     run_topics(db_path, args)
     out = capsys.readouterr().out
     assert "Cluster" in out or "cluster" in out or "community" in out
@@ -58,7 +58,7 @@ def test_topics_csv(tmp_path: Path) -> None:
     db.close()
 
     out_csv = tmp_path / "out.csv"
-    args = argparse.Namespace(top=10, min_size=2, output=out_csv)
+    args = argparse.Namespace(top=10, min_size=2, output=out_csv, min_weight=1)
     run_topics(db_path, args)
     assert out_csv.exists()
 
@@ -73,6 +73,6 @@ def test_topics_too_small(tmp_path: Path, capsys) -> None:
     })
     db.close()
 
-    args = argparse.Namespace(top=10, min_size=3, output=None)
+    args = argparse.Namespace(top=10, min_size=3, output=None, min_weight=1)
     run_topics(db_path, args)
     assert "too small" in capsys.readouterr().out

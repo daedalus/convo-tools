@@ -560,6 +560,7 @@ def entity_timeline(
 def entity_centrality(
     entity_type: str = "",
     limit: int = 20,
+    min_weight: int = 2,
 ) -> list[dict[str, Any]]:
     """
     Find bridge entities via betweenness centrality on the entity co-occurrence graph.
@@ -570,12 +571,13 @@ def entity_centrality(
     Args:
         entity_type: Optional spaCy label filter (PERSON, ORG, GPE, ...).
         limit: How many entities to return (default 20).
+        min_weight: Minimum co-occurrence weight (default 2; higher = fewer edges, less noise).
 
     Returns:
         List of entities ranked by betweenness, with name, type, score, degree.
     """
     db = _g()
-    cg = db.build_entity_cooc_graph()
+    cg = db.build_entity_cooc_graph(min_weight=min_weight)
 
     n = cg.number_of_nodes()
     if n < 2:
@@ -721,6 +723,7 @@ def _entity_type(db: GraphDB, eid: str) -> str:
 def topic_clusters(
     min_size: int = 3,
     top_entities: int = 10,
+    min_weight: int = 2,
 ) -> list[dict[str, Any]]:
     """
     Discover topic clusters via Louvain community detection on the entity
@@ -733,13 +736,14 @@ def topic_clusters(
     Args:
         min_size: Minimum entities per cluster (default 3).
         top_entities: How many top entities to show per cluster (default 10).
+        min_weight: Minimum co-occurrence weight (default 2; higher = fewer edges, less noise).
 
     Returns:
         List of clusters, each with id, size, entity_type_distribution,
         top_entities list, and top_keywords.
     """
     db = _g()
-    cg = db.build_entity_cooc_graph()
+    cg = db.build_entity_cooc_graph(min_weight=min_weight)
 
     if cg.number_of_nodes() < 2:
         return []

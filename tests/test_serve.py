@@ -234,14 +234,14 @@ class TestEntityTimeline:
 
 class TestEntityCentrality:
     def test_ranking(self) -> None:
-        r = _serve.entity_centrality()
+        r = _serve.entity_centrality(min_weight=1)
         assert len(r) == 3
         for item in r:
             assert "betweenness" in item
             assert "degree" in item
 
     def test_type_filter(self) -> None:
-        r = _serve.entity_centrality(entity_type="PERSON")
+        r = _serve.entity_centrality(entity_type="PERSON", min_weight=1)
         assert len(r) == 1
 
     def test_empty_graph(self, tmp_path: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -271,13 +271,13 @@ class TestSimilarConversations:
 
 class TestTopicClusters:
     def test_clusters_found(self) -> None:
-        r = _serve.topic_clusters(min_size=2)
+        r = _serve.topic_clusters(min_size=2, min_weight=1)
         assert len(r) >= 1
         assert "top_entities" in r[0]
         assert "top_keywords" in r[0]
 
     def test_types(self) -> None:
-        r = _serve.topic_clusters(min_size=2)
+        r = _serve.topic_clusters(min_size=2, min_weight=1)
         for cluster in r:
             for ent in cluster["top_entities"]:
                 assert "name" in ent

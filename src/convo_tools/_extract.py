@@ -4,10 +4,19 @@ import json
 import pickle
 from typing import TYPE_CHECKING, Any
 
+from langdetect import detect, LangDetectException
+
 from convo_tools._util import text_hash
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+
+def detect_lang(text: str) -> str:
+    try:
+        return detect(text[:5000])
+    except LangDetectException:
+        return "unknown"
 
 
 def extract_messages(conversation: dict[str, Any]) -> list[dict[str, Any]]:
@@ -62,6 +71,7 @@ def run_extract(json_dir: Path, pickle_path: Path) -> None:
                 if h in seen_hashes:
                     continue
                 seen_hashes.add(h)
+                msg["lang"] = detect_lang(msg["text"])
                 all_messages.append(msg)
                 kept += 1
 

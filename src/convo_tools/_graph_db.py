@@ -489,7 +489,7 @@ class GraphDB:
 
     # ── Entity co-occurrence graph (NetworkX) ──────────────────────────
 
-    def build_entity_cooc_graph(self) -> nx.Graph:
+    def build_entity_cooc_graph(self, min_weight: int = 1) -> nx.Graph:
         g = nx.Graph()
         entity_ids = self.get_entity_id_set()
         g.add_nodes_from(entity_ids)
@@ -497,7 +497,9 @@ class GraphDB:
             "SELECT a.entity_id AS entity_a, b.entity_id AS entity_b, weight "
             "FROM edge_cooc "
             "JOIN entity_int a ON edge_cooc.entity_a_int = a.int_id "
-            "JOIN entity_int b ON edge_cooc.entity_b_int = b.int_id"
+            "JOIN entity_int b ON edge_cooc.entity_b_int = b.int_id "
+            "WHERE weight >= ?",
+            (min_weight,),
         ).fetchall()
         for r in rows:
             if r["entity_a"] in entity_ids and r["entity_b"] in entity_ids:

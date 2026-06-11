@@ -226,6 +226,10 @@ def _build_centrality_parser() -> argparse.ArgumentParser:
         help="Force exact computation (may be slow for large graphs)",
     )
     ap.add_argument(
+        "--min-weight", type=int, default=2,
+        help="Minimum co-occurrence weight (default: 2; higher = fewer edges, less noise)",
+    )
+    ap.add_argument(
         "-o", "--output", type=Path,
         help="Output CSV file with all entities",
     )
@@ -295,6 +299,10 @@ def _build_topics_parser() -> argparse.ArgumentParser:
     ap.add_argument(
         "--min-size", type=int, default=3,
         help="Minimum entities per cluster to display (default: 3)",
+    )
+    ap.add_argument(
+        "--min-weight", type=int, default=2,
+        help="Minimum co-occurrence weight (default: 2; higher = fewer edges, less noise)",
     )
     ap.add_argument(
         "-o", "--output", type=Path,

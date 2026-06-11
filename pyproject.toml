@@ -17,6 +17,7 @@ dependencies = [
     "pandas",
     "spacy",
     "scikit-learn",
+    "langdetect",
 ]
 
 [project.optional-dependencies]

@@ -33,7 +33,7 @@ def _entity_type(entity_id: str, db: GraphDB) -> str:
 def run_topics(db_path: str | Path, args: argparse.Namespace) -> None:
     db = GraphDB(db_path)
 
-    g = db.build_entity_cooc_graph()
+    g = db.build_entity_cooc_graph(min_weight=args.min_weight)
 
     n = g.number_of_nodes()
     m = g.number_of_edges()

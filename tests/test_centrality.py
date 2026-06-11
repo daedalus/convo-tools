@@ -31,7 +31,7 @@ def test_centrality_basic(tmp_path: Path, capsys) -> None:
     db.add_graph_batch(_graph())
     db.close()
 
-    args = argparse.Namespace(top=20, samples=0, exact=True, output=None)
+    args = argparse.Namespace(top=20, samples=0, exact=True, output=None, min_weight=1)
     run_centrality(db_path, args)
     captured = capsys.readouterr().out
     assert "centrality" in captured
@@ -45,7 +45,7 @@ def test_centrality_csv(tmp_path: Path) -> None:
     db.close()
     out_csv = tmp_path / "out.csv"
 
-    args = argparse.Namespace(top=20, samples=0, exact=True, output=out_csv)
+    args = argparse.Namespace(top=20, samples=0, exact=True, output=out_csv, min_weight=1)
     run_centrality(db_path, args)
     assert out_csv.exists()
     assert "entity_id" in out_csv.read_text()
@@ -62,7 +62,7 @@ def test_centrality_too_small(tmp_path: Path, capsys) -> None:
     db.add_graph_batch(g)
     db.close()
 
-    args = argparse.Namespace(top=20, samples=0, exact=True, output=None)
+    args = argparse.Namespace(top=20, samples=0, exact=True, output=None, min_weight=1)
     run_centrality(db_path, args)
     assert "too small" in capsys.readouterr().out
 
@@ -75,6 +75,6 @@ def test_centrality_missing_nodes_key(tmp_path: Path, capsys) -> None:
                         "edges_mentions": set(), "edges_keywords": []})
     db.close()
 
-    args = argparse.Namespace(top=20, samples=0, exact=True, output=None)
+    args = argparse.Namespace(top=20, samples=0, exact=True, output=None, min_weight=1)
     run_centrality(db_path, args)
     assert "too small" in capsys.readouterr().out
