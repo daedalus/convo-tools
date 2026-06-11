@@ -79,6 +79,11 @@ def _build_graph_parser() -> argparse.ArgumentParser:
         "--offset", type=int, default=0,
         help="Skip first N messages (use with --limit for pagination)",
     )
+    ap.add_argument(
+        "--only-lang", default="all",
+        choices=["all", "en", "es"],
+        help="Only process messages in a specific language (default: all configured languages)",
+    )
     return ap
 
 
@@ -563,7 +568,10 @@ def main() -> int:
     elif mode == "timeline":
         run_timeline(args.graph_path, args)
     elif mode == "serve":
-        run_serve(str(args.graph_path) if args.graph_path else None)
+        run_serve(
+            str(args.graph_path) if args.graph_path else None,
+            messages_path=args.messages,
+        )
     elif mode == "join":
         run_join(args)
     elif mode == "split":
@@ -578,6 +586,7 @@ def main() -> int:
             debug=args.debug,
             limit=args.limit,
             offset=args.offset,
+            only_lang=args.only_lang,
         )
     elif mode == "full":
         run_extract(args.json_dir, args.pickle_path)
@@ -588,6 +597,7 @@ def main() -> int:
             debug=args.debug,
             limit=args.limit,
             offset=args.offset,
+            only_lang=args.only_lang,
         )
 
     return 0

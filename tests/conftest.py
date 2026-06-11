@@ -1,6 +1,12 @@
 from __future__ import annotations
 
 import pytest
+from convo_tools._builder import _LANG_MODELS
+
+
+@pytest.fixture(autouse=True)
+def _clear_lang_model_cache() -> None:
+    _LANG_MODELS.clear()
 
 
 @pytest.fixture
@@ -40,6 +46,7 @@ def sample_messages() -> list[dict]:
             "text": "Hello world",
             "parent": None,
             "conversation_id": "conv1",
+            "lang": "en",
         },
         {
             "id": "msg2",
@@ -47,6 +54,7 @@ def sample_messages() -> list[dict]:
             "text": "Hi there!",
             "parent": "msg1",
             "conversation_id": "conv1",
+            "lang": "en",
         },
         {
             "id": "msg3",
@@ -54,6 +62,7 @@ def sample_messages() -> list[dict]:
             "text": "Tell me about Fibonacci numbers",
             "parent": "msg2",
             "conversation_id": "conv1",
+            "lang": "en",
         },
     ]
 

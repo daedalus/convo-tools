@@ -73,6 +73,7 @@ class TestBuildGraph:
                 "text": "reply",
                 "parent": "nonexistent",
                 "conversation_id": "c1",
+                "lang": "en",
             },
         ]
         db = GraphDB(tmp_path / "test.db")
@@ -92,6 +93,7 @@ class TestBuildGraph:
                 "text": f"text{i}",
                 "parent": None,
                 "conversation_id": "c1",
+                "lang": "en",
             }
             for i in range(10)
         ]

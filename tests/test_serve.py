@@ -47,6 +47,7 @@ def _graph() -> dict:
 
 @pytest.fixture(autouse=True)
 def _mock_graph(tmp_path: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch) -> None:
+    _serve._MSG_TIMESTAMPS.clear()
     db_path = tmp_path / "test.db"
     db = GraphDB(db_path)
     db.add_graph_batch(_graph())
@@ -296,10 +297,26 @@ class TestReplyChainStats:
 
 
 class TestEntityTemporalMetrics:
-    def test_metrics(self) -> None:
+    def test_metrics_no_timestamps(self) -> None:
         r = _serve.entity_temporal_metrics("entity::PERSON::alice")
         assert r["entity"]["name"] == "alice"
         assert "error" in r
+
+    def test_with_timestamps(self) -> None:
+        _serve._MSG_TIMESTAMPS.clear()
+        _serve._MSG_TIMESTAMPS.update({
+            "msg::1": 1_000_000.0,
+            "msg::4": 1_000_100.0,
+        })
+        r = _serve.entity_temporal_metrics("entity::PERSON::alice", window_days=30)
+        assert r["entity"]["name"] == "alice"
+        assert "error" not in r
+        assert r["total_mentions"] == 2
+        assert r["active_buckets"] >= 1
+        assert "first_bucket" in r
+        assert "last_bucket" in r
+        assert "per_bucket" in r
+        assert len(r["per_bucket"]) >= 1
 
     def test_unknown(self) -> None:
         r = _serve.entity_temporal_metrics("entity::nonexistent")
@@ -314,3 +331,16 @@ class TestEntityTimelineBucket:
     def test_bucket_not_found(self) -> None:
         r = _serve.entity_timeline_bucket("2999-99")
         assert "error" in r[0]
+
+    def test_bucket_with_timestamps(self) -> None:
+        _serve._MSG_TIMESTAMPS.clear()
+        _serve._MSG_TIMESTAMPS.update({
+            "msg::1": 1_000_000.0,
+            "msg::2": 1_000_100.0,
+            "msg::4": 1_000_200.0,
+        })
+        r = _serve.entity_timeline_bucket("1970-01", freq="month", top=5)
+        assert "error" not in r[0]
+        assert len(r) >= 1
+        names = {e["name"] for e in r}
+        assert "alice" in names

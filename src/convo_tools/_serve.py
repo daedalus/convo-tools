@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import pickle
 import re
 from collections import Counter, defaultdict
 from datetime import UTC, datetime
@@ -21,6 +22,23 @@ P = Path.home() / ".convo-tools"
 
 _graph: GraphDB | None = None
 _GRAPH_PATH: Path = P / "knowledge_graph.db"
+_MESSAGES_PATH: Path = P / "messages.pkl"
+_MSG_TIMESTAMPS: dict[str, float | None] = {}
+
+
+def _load_timestamps() -> dict[str, float | None]:
+    global _MSG_TIMESTAMPS
+    if _MSG_TIMESTAMPS:
+        return _MSG_TIMESTAMPS
+    if not _MESSAGES_PATH.exists():
+        return {}
+    try:
+        with open(_MESSAGES_PATH, "rb") as f:
+            messages: list[dict[str, Any]] = pickle.load(f)
+        _MSG_TIMESTAMPS = {m["id"]: m.get("create_time") for m in messages}
+    except Exception:
+        _MSG_TIMESTAMPS = {}
+    return _MSG_TIMESTAMPS
 
 
 def _load_graph() -> GraphDB:
@@ -32,6 +50,7 @@ def _load_graph() -> GraphDB:
                 "Run: convo-tools -m graph messages.pkl"
             )
         _graph = GraphDB(_GRAPH_PATH)
+        _load_timestamps()
     return _graph
 
 
@@ -931,13 +950,84 @@ def entity_temporal_metrics(
     if entity is None:
         return {"error": f"entity not found: {entity_id}"}
 
+    timestamps = _MSG_TIMESTAMPS
+    if not timestamps:
+        return {
+            "entity": {
+                "id": entity_id,
+                "name": entity.get("name", ""),
+                "entity_type": entity.get("entity_type", ""),
+            },
+            "error": "temporal metrics require messages.pkl with create_time data. "
+                     "Run: convo-tools -m extract <json_dir> <messages.pkl>",
+        }
+
+    edges_mentions = db.get_edges_mentions()
+    bucket_ents: defaultdict[str, Counter[str]] = defaultdict(Counter)
+
+    for msg_id, ent_id in edges_mentions:
+        ts = timestamps.get(msg_id)
+        bucket = _time_bucket_temporal(ts, window_days)
+        if bucket != "unknown":
+            bucket_ents[bucket][ent_id] += 1
+
+    sorted_buckets = sorted(b for b in bucket_ents)
+    if not sorted_buckets:
+        return {
+            "entity": {
+                "id": entity_id,
+                "name": entity.get("name", ""),
+                "entity_type": entity.get("entity_type", ""),
+            },
+            "error": "no timestamped mentions found for this entity",
+        }
+
+    bucket_cts: list[tuple[str, int]] = []
+    for b in sorted_buckets:
+        count = bucket_ents[b].get(entity_id, 0)
+        if count:
+            bucket_cts.append((b, count))
+
+    if not bucket_cts:
+        return {
+            "entity": {
+                "id": entity_id,
+                "name": entity.get("name", ""),
+                "entity_type": entity.get("entity_type", ""),
+            },
+            "total_mentions": 0,
+            "active_buckets": 0,
+            "message": "entity not found in any timestamped bucket",
+        }
+
+    first_bucket = bucket_cts[0][0]
+    last_bucket = bucket_cts[-1][0]
+    total = sum(c for _, c in bucket_cts)
+    n_active = len(bucket_cts)
+    mention_days = [c for _, c in bucket_cts]
+
+    mean_ = total / max(len(sorted_buckets), 1)
+    if len(sorted_buckets) > 1 and mean_ > 0:
+        variance = sum((c - mean_) ** 2 for c in mention_days) / len(sorted_buckets)
+        bursts = sum(1 for c in mention_days if mean_ > 0 and c > mean_ + 2.0 * math.sqrt(variance))
+        cv = math.sqrt(variance) / mean_
+    else:
+        bursts = 0
+        cv = 0.0
+
     return {
         "entity": {
             "id": entity_id,
             "name": entity.get("name", ""),
             "entity_type": entity.get("entity_type", ""),
         },
-        "error": "temporal metrics require create_time data not yet available in the DB schema",
+        "first_bucket": first_bucket,
+        "last_bucket": last_bucket,
+        "total_mentions": total,
+        "active_buckets": n_active,
+        "burst_count": bursts,
+        "cv": round(cv, 4),
+        "per_bucket": [{"bucket": b, "count": c} for b, c in bucket_cts],
     }
 
 
@@ -980,13 +1070,38 @@ def entity_timeline_bucket(
     """
     db = _g()
     edges_mentions = db.get_edges_mentions()
-    mention_counts: Counter[str] = Counter(eid for _, eid in edges_mentions)
 
-    if bucket:
-        return [{"error": f"no data for bucket '{bucket}' (temporal data requires create_time in DB)"}]
+    if not bucket:
+        mention_counts: Counter[str] = Counter(eid for _, eid in edges_mentions)
+        results = []
+        for eid, c in mention_counts.most_common(top):
+            n = db.get_node(eid) or {}
+            results.append({
+                "id": eid,
+                "name": n.get("name", ""),
+                "entity_type": n.get("entity_type", ""),
+                "mention_count": c,
+            })
+        return results
+
+    timestamps = _MSG_TIMESTAMPS
+    if not timestamps:
+        return [{"error": f"no data for bucket '{bucket}' (messages.pkl with create_time not loaded)"}]
+
+    bucket_counts: Counter[str] = Counter()
+    for msg_id, ent_id in edges_mentions:
+        ts = timestamps.get(msg_id)
+        if ts is None:
+            continue
+        ts_bucket = _time_bucket_timeline(ts, freq)
+        if ts_bucket == bucket:
+            bucket_counts[ent_id] += 1
+
+    if not bucket_counts:
+        return [{"error": f"no data for bucket '{bucket}'"}]
 
     results = []
-    for eid, c in mention_counts.most_common(top):
+    for eid, c in bucket_counts.most_common(top):
         n = db.get_node(eid) or {}
         results.append({
             "id": eid,
@@ -997,11 +1112,13 @@ def entity_timeline_bucket(
     return results
 
 
-def run_serve(graph_path: str | None = None) -> None:
+def run_serve(graph_path: str | None = None, messages_path: str | Path | None = None) -> None:
     if FastMCP is None:
         print("Error: mcp package not installed. Run: pip install convo-tools[mcp]")
         return
-    global _GRAPH_PATH
+    global _GRAPH_PATH, _MESSAGES_PATH
     if graph_path:
         _GRAPH_PATH = Path(graph_path)
+    if messages_path:
+        _MESSAGES_PATH = Path(messages_path)
     mcp.run()

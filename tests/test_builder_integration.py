@@ -30,6 +30,7 @@ def _msg(text: str, **kw):
         "text": text,
         "parent": kw.get("parent", None),
         "create_time": kw.get("create_time", 1000.0),
+        "lang": kw.get("lang", "en"),
     }
 
 
