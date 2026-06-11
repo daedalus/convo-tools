@@ -507,10 +507,6 @@ def _build_serve_parser() -> argparse.ArgumentParser:
         dest="graph_path",
         help="Input SQLite graph database (default: knowledge_graph.db)",
     )
-    ap.add_argument(
-        "--messages", type=Path, default=_P / "messages.pkl",
-        help="Messages pickle for temporal/similarity tools (default: messages.pkl)",
-    )
     return ap
 
 
@@ -574,7 +570,6 @@ def main() -> int:
     elif mode == "serve":
         run_serve(
             str(args.graph_path) if args.graph_path else None,
-            messages_path=args.messages,
         )
     elif mode == "join":
         run_join(args)

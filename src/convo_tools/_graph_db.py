@@ -19,7 +19,8 @@ CREATE TABLE IF NOT EXISTS node (
     role TEXT DEFAULT '',
     text TEXT DEFAULT '',
     name TEXT DEFAULT '',
-    entity_type TEXT DEFAULT ''
+    entity_type TEXT DEFAULT '',
+    create_time REAL DEFAULT NULL
 );
 
 CREATE TABLE IF NOT EXISTS edge_contains (
@@ -100,6 +101,14 @@ class GraphDB:
         conn = self._conn()
         conn.executescript(SCHEMA_SQL)
         conn.commit()
+        self._migrate(conn)
+
+    @staticmethod
+    def _migrate(conn: sqlite3.Connection) -> None:
+        cols = {r["name"] for r in conn.execute("PRAGMA table_info(node)").fetchall()}
+        if "create_time" not in cols:
+            conn.execute("ALTER TABLE node ADD COLUMN create_time REAL DEFAULT NULL")
+            conn.commit()
 
     def close(self) -> None:
         if hasattr(self._local, "conn") and self._local.conn is not None:
@@ -111,7 +120,7 @@ class GraphDB:
     def upsert_node(self, node_id: str, **attrs: Any) -> None:
         conn = self._conn()
         existing = conn.execute(
-            "SELECT label, role, text, name, entity_type FROM node WHERE id = ?",
+            "SELECT label, role, text, name, entity_type, create_time FROM node WHERE id = ?",
             (node_id,),
         ).fetchone()
         if existing:
@@ -121,17 +130,18 @@ class GraphDB:
                 "text": attrs.get("text", existing["text"] or ""),
                 "name": attrs.get("name", existing["name"] or ""),
                 "entity_type": attrs.get("entity_type", existing["entity_type"] or ""),
+                "create_time": attrs.get("create_time", existing["create_time"]),
             }
             conn.execute(
-                """UPDATE node SET label=?, role=?, text=?, name=?, entity_type=?
+                """UPDATE node SET label=?, role=?, text=?, name=?, entity_type=?, create_time=?
                    WHERE id=?""",
                 (merged["label"], merged["role"], merged["text"],
-                 merged["name"], merged["entity_type"], node_id),
+                 merged["name"], merged["entity_type"], merged["create_time"], node_id),
             )
         else:
             conn.execute(
-                """INSERT INTO node (id, label, role, text, name, entity_type)
-                   VALUES (?, ?, ?, ?, ?, ?)""",
+                """INSERT INTO node (id, label, role, text, name, entity_type, create_time)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
                 (
                     node_id,
                     attrs.get("label", ""),
@@ -139,12 +149,13 @@ class GraphDB:
                     attrs.get("text", ""),
                     attrs.get("name", ""),
                     attrs.get("entity_type", ""),
+                    attrs.get("create_time"),
                 ),
             )
 
     def get_node(self, node_id: str) -> dict[str, Any] | None:
         row = self._conn().execute(
-            "SELECT id, label, role, text, name, entity_type FROM node WHERE id = ?",
+            "SELECT id, label, role, text, name, entity_type, create_time FROM node WHERE id = ?",
             (node_id,),
         ).fetchone()
         if row is None:
@@ -177,14 +188,14 @@ class GraphDB:
             params.append(entity_type.upper())
         where = " AND ".join(clauses) if clauses else "1=1"
         rows = self._conn().execute(
-            f"SELECT id, label, role, text, name, entity_type FROM node WHERE {where} LIMIT ?",
+            f"SELECT id, label, role, text, name, entity_type, create_time FROM node WHERE {where} LIMIT ?",
             (*params, limit),
         ).fetchall()
         return [dict(r) for r in rows]
 
     def get_all_nodes_by_label(self, label: str) -> list[dict[str, Any]]:
         rows = self._conn().execute(
-            "SELECT id, label, role, text, name, entity_type FROM node WHERE label = ?",
+            "SELECT id, label, role, text, name, entity_type, create_time FROM node WHERE label = ?",
             (label,),
         ).fetchall()
         return [dict(r) for r in rows]
@@ -414,6 +425,35 @@ class GraphDB:
         self.add_mentions_batch(graph_data.get("edges_mentions", set()))
         self.add_cooc_batch(graph_data.get("edges_cooc", set()))
         self.add_keywords_batch(graph_data.get("edges_keywords", []))
+
+    def backfill_timestamps(self, timestamps: dict[str, float | None]) -> None:
+        conn = self._conn()
+        conn.execute("BEGIN TRANSACTION")
+        try:
+            for msg_id, ts in timestamps.items():
+                conn.execute(
+                    "UPDATE node SET create_time = ? WHERE id = ? AND create_time IS NULL",
+                    (ts, msg_id),
+                )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+
+    def get_message_timestamps(self, msg_ids: set[str] | None = None) -> dict[str, float | None]:
+        if msg_ids is not None:
+            if not msg_ids:
+                return {}
+            placeholders = ",".join("?" for _ in msg_ids)
+            rows = self._conn().execute(
+                f"SELECT id, create_time FROM node WHERE id IN ({placeholders})",
+                tuple(msg_ids),
+            ).fetchall()
+        else:
+            rows = self._conn().execute(
+                "SELECT id, create_time FROM node WHERE create_time IS NOT NULL"
+            ).fetchall()
+        return {r["id"]: r["create_time"] for r in rows}
 
     # ── High-level query methods ───────────────────────────────────────
 

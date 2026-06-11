@@ -47,7 +47,6 @@ def _graph() -> dict:
 
 @pytest.fixture(autouse=True)
 def _mock_graph(tmp_path: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch) -> None:
-    _serve._MSG_TIMESTAMPS.clear()
     db_path = tmp_path / "test.db"
     db = GraphDB(db_path)
     db.add_graph_batch(_graph())
@@ -303,11 +302,9 @@ class TestEntityTemporalMetrics:
         assert "error" in r
 
     def test_with_timestamps(self) -> None:
-        _serve._MSG_TIMESTAMPS.clear()
-        _serve._MSG_TIMESTAMPS.update({
-            "msg::1": 1_000_000.0,
-            "msg::4": 1_000_100.0,
-        })
+        db = _serve._g()
+        db.upsert_node("msg::1", create_time=1_000_000.0)
+        db.upsert_node("msg::4", create_time=1_000_100.0)
         r = _serve.entity_temporal_metrics("entity::PERSON::alice", window_days=30)
         assert r["entity"]["name"] == "alice"
         assert "error" not in r
@@ -333,12 +330,10 @@ class TestEntityTimelineBucket:
         assert "error" in r[0]
 
     def test_bucket_with_timestamps(self) -> None:
-        _serve._MSG_TIMESTAMPS.clear()
-        _serve._MSG_TIMESTAMPS.update({
-            "msg::1": 1_000_000.0,
-            "msg::2": 1_000_100.0,
-            "msg::4": 1_000_200.0,
-        })
+        db = _serve._g()
+        db.upsert_node("msg::1", create_time=1_000_000.0)
+        db.upsert_node("msg::2", create_time=1_000_100.0)
+        db.upsert_node("msg::4", create_time=1_000_200.0)
         r = _serve.entity_timeline_bucket("1970-01", freq="month", top=5)
         assert "error" not in r[0]
         assert len(r) >= 1

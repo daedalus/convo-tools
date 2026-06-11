@@ -168,6 +168,7 @@ def build_graph_to_db(
                 label="Message",
                 role=msg["role"],
                 text=msg["text"][:1000],
+                create_time=msg.get("create_time"),
             )
             node_count += 1
             db.add_edge_contains(conv_id, msg["id"])
@@ -304,6 +305,13 @@ def run_graph(
         print(f"Limited to {limit} messages (offset={offset}, total_new={total_new})")
 
     build_graph_to_db(new_messages, db, debug=debug, known_message_ids=processed_ids, only_lang=only_lang, batch_size=batch_size)
+
+    # Backfill create_time for any message nodes that already existed
+    # without timestamps (incremental builds from before the column existed).
+    timestamps = {m["id"]: m.get("create_time") for m in all_messages if m.get("create_time") is not None}
+    if timestamps:
+        db.backfill_timestamps(timestamps)
+        print(f"  Backfilled timestamps for {len(timestamps)} messages")
 
     print("\nDone")
     stats = db.graph_stats()

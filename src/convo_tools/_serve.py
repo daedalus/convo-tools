@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import math
-import pickle
 import re
 from collections import Counter, defaultdict
 from datetime import UTC, datetime
@@ -22,23 +21,6 @@ P = Path.home() / ".convo-tools"
 
 _graph: GraphDB | None = None
 _GRAPH_PATH: Path = P / "knowledge_graph.db"
-_MESSAGES_PATH: Path = P / "messages.pkl"
-_MSG_TIMESTAMPS: dict[str, float | None] = {}
-
-
-def _load_timestamps() -> dict[str, float | None]:
-    global _MSG_TIMESTAMPS
-    if _MSG_TIMESTAMPS:
-        return _MSG_TIMESTAMPS
-    if not _MESSAGES_PATH.exists():
-        return {}
-    try:
-        with open(_MESSAGES_PATH, "rb") as f:
-            messages: list[dict[str, Any]] = pickle.load(f)
-        _MSG_TIMESTAMPS = {m["id"]: m.get("create_time") for m in messages}
-    except Exception:
-        _MSG_TIMESTAMPS = {}
-    return _MSG_TIMESTAMPS
 
 
 def _load_graph() -> GraphDB:
@@ -50,7 +32,6 @@ def _load_graph() -> GraphDB:
                 "Run: convo-tools -m graph messages.pkl"
             )
         _graph = GraphDB(_GRAPH_PATH)
-        _load_timestamps()
     return _graph
 
 
@@ -950,7 +931,7 @@ def entity_temporal_metrics(
     if entity is None:
         return {"error": f"entity not found: {entity_id}"}
 
-    timestamps = _MSG_TIMESTAMPS
+    timestamps = db.get_message_timestamps()
     if not timestamps:
         return {
             "entity": {
@@ -958,8 +939,7 @@ def entity_temporal_metrics(
                 "name": entity.get("name", ""),
                 "entity_type": entity.get("entity_type", ""),
             },
-            "error": "temporal metrics require messages.pkl with create_time data. "
-                     "Run: convo-tools -m extract <json_dir> <messages.pkl>",
+            "error": "no timestamps in graph; rebuild with: convo-tools -m graph ...",
         }
 
     edges_mentions = db.get_edges_mentions()
@@ -1084,9 +1064,9 @@ def entity_timeline_bucket(
             })
         return results
 
-    timestamps = _MSG_TIMESTAMPS
+    timestamps = db.get_message_timestamps()
     if not timestamps:
-        return [{"error": f"no data for bucket '{bucket}' (messages.pkl with create_time not loaded)"}]
+        return [{"error": f"no data for bucket '{bucket}' (no timestamps in graph; rebuild with: convo-tools -m graph ...)"}]
 
     bucket_counts: Counter[str] = Counter()
     for msg_id, ent_id in edges_mentions:
@@ -1112,13 +1092,11 @@ def entity_timeline_bucket(
     return results
 
 
-def run_serve(graph_path: str | None = None, messages_path: str | Path | None = None) -> None:
+def run_serve(graph_path: str | None = None) -> None:
     if FastMCP is None:
         print("Error: mcp package not installed. Run: pip install convo-tools[mcp]")
         return
-    global _GRAPH_PATH, _MESSAGES_PATH
+    global _GRAPH_PATH
     if graph_path:
         _GRAPH_PATH = Path(graph_path)
-    if messages_path:
-        _MESSAGES_PATH = Path(messages_path)
     mcp.run()
