@@ -6,6 +6,36 @@ from convo_tools import _serve
 from convo_tools._graph_db import GraphDB
 
 
+class TestGraphDBTimestamps:
+    def test_get_message_timestamps_with_ids(self) -> None:
+        db = _serve._g()
+        db.upsert_node("msg::1", create_time=1_000_000.0)
+        r = db.get_message_timestamps({"msg::1", "msg::nonexistent"})
+        assert r.get("msg::1") == 1_000_000.0
+        assert r.get("msg::nonexistent") is None
+
+    def test_get_message_timestamps_empty_ids(self) -> None:
+        db = _serve._g()
+        assert db.get_message_timestamps(set()) == {}
+
+    def test_backfill_timestamps(self) -> None:
+        db = _serve._g()
+        db.upsert_node("msg::backfill_test", label="Message")
+        db.backfill_timestamps({"msg::backfill_test": 2_000_000.0})
+        n = db.get_node("msg::backfill_test")
+        assert n["create_time"] == 2_000_000.0
+
+    def test_backfill_timestamps_skips_existing(self) -> None:
+        db = _serve._g()
+        db.upsert_node("msg::already_set", label="Message", create_time=1_000_000.0)
+        db.backfill_timestamps({"msg::already_set": 9_999_999.0})
+        n = db.get_node("msg::already_set")
+        assert n["create_time"] == 1_000_000.0
+
+
+
+
+
 def _graph() -> dict:
     return {
         "nodes": {
