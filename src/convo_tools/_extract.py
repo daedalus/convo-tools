@@ -4,7 +4,7 @@ import json
 import pickle
 from typing import TYPE_CHECKING, Any
 
-from langdetect import detect, LangDetectException
+from langdetect import LangDetectException, detect
 
 from convo_tools._util import text_hash
 
@@ -49,38 +49,73 @@ def extract_messages(conversation: dict[str, Any]) -> list[dict[str, Any]]:
     return messages
 
 
-def run_extract(json_dir: Path, pickle_path: Path) -> None:
+def _process_conversation(
+    conversation: dict[str, Any],
+    conversation_id: str,
+    seen_hashes: set[str],
+) -> list[dict[str, Any]]:
+    messages = extract_messages(conversation)
+    result: list[dict[str, Any]] = []
+    for msg in messages:
+        msg["conversation_id"] = conversation_id
+        h = text_hash(msg["text"])
+        if h in seen_hashes:
+            continue
+        seen_hashes.add(h)
+        msg["lang"] = detect_lang(msg["text"])
+        result.append(msg)
+    return result
+
+
+def run_extract(json_path: Path, pickle_path: Path) -> None:
     all_messages: list[dict[str, Any]] = []
     seen_hashes: set[str] = set()
 
-    json_files = list(json_dir.glob("*.json"))
-    print(f"Found {len(json_files)} conversation files in '{json_dir}/'")
+    if json_path.is_file():
+        print(f"Reading single file: '{json_path}'")
+        with open(json_path, encoding="utf-8") as f:
+            data = json.load(f)
 
-    for file in json_files:
-        try:
-            with open(file, encoding="utf-8") as f:
-                conversation = json.load(f)
+        if isinstance(data, list):
+            print(f"JSON array with {len(data)} conversations")
+            for conversation in data:
+                conv_id = conversation.get("conversation_id", conversation.get("id", ""))
+                msgs = _process_conversation(conversation, conv_id, seen_hashes)
+                if msgs:
+                    print(f"  {conv_id[:40]}: {len(msgs)} messages")
+                all_messages.extend(msgs)
+        elif isinstance(data, dict):
+            conv_id = data.get("conversation_id", data.get("id", json_path.stem))
+            msgs = _process_conversation(data, conv_id, seen_hashes)
+            print(f"  {conv_id[:40]}: {len(msgs)} messages")
+            all_messages.extend(msgs)
+        else:
+            print(f"ERROR: unexpected JSON type: {type(data)}")
+            return
 
-            conversation_id = file.stem
-            messages = extract_messages(conversation)
+    elif json_path.is_dir():
+        json_files = list(json_path.glob("*.json"))
+        print(f"Found {len(json_files)} conversation files in '{json_path}/'")
 
-            kept = 0
-            for msg in messages:
-                msg["conversation_id"] = conversation_id
-                h = text_hash(msg["text"])
-                if h in seen_hashes:
-                    continue
-                seen_hashes.add(h)
-                msg["lang"] = detect_lang(msg["text"])
-                all_messages.append(msg)
-                kept += 1
+        for file in json_files:
+            try:
+                with open(file, encoding="utf-8") as f:
+                    conversation = json.load(f)
 
-            print(
-                f"  {file.name}: {len(messages)} messages ({len(messages) - kept} deduped)"
-            )
+                conversation_id = file.stem
+                msgs = _process_conversation(conversation, conversation_id, seen_hashes)
+                print(
+                    f"  {file.name}: {len(extract_messages(conversation))} messages "
+                    f"({len(extract_messages(conversation)) - len(msgs)} deduped)"
+                )
+                all_messages.extend(msgs)
 
-        except Exception as e:
-            print(f"ERROR {file}: {e}")
+            except Exception as e:
+                print(f"ERROR {file}: {e}")
+
+    else:
+        print(f"ERROR: path does not exist: {json_path}")
+        return
 
     with open(pickle_path, "wb") as f:
         pickle.dump(all_messages, f)

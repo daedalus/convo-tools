@@ -43,18 +43,19 @@ def _extract_entities_from_messages(
     nlp: Any,
     db: GraphDB,
     debug: bool = False,
+    batch_size: int = 16,
 ) -> tuple[int, int]:
     entity_count = 0
     cooc_edges = 0
     max_len = nlp.max_length
 
-    n_batches = (len(messages) + 15) // 16
-    batch_starts = list(range(0, len(messages), 16))
+    n_batches = (len(messages) + batch_size - 1) // batch_size
+    batch_starts = list(range(0, len(messages), batch_size))
 
     for batch_start in _progressbar(
-        batch_starts, n_batches, prefix=f"  entities ", width=40
+        batch_starts, n_batches,         prefix=f"  ner batches ", width=40
     ):
-        batch = messages[batch_start : batch_start + 16]
+        batch = messages[batch_start : batch_start + batch_size]
 
         seen_per_msg: dict[int, set[str]] = defaultdict(set)
         batch_mentions: set[tuple[str, str]] = set()
@@ -120,6 +121,7 @@ def build_graph_to_db(
     debug: bool = False,
     known_message_ids: set[str] | None = None,
     only_lang: str = "all",
+    batch_size: int = 16,
 ) -> None:
     lang_cfg = _load_lang_config()
 
@@ -191,7 +193,7 @@ def build_graph_to_db(
         model_name = lang_cfg[lang]
         print(f"  [{lang}] {len(msgs)} messages -> {model_name}")
         nlp = _ensure_model(model_name)
-        ent_count, cooc_count = _extract_entities_from_messages(msgs, nlp, db, debug=debug)
+        ent_count, cooc_count = _extract_entities_from_messages(msgs, nlp, db, debug=debug, batch_size=batch_size)
         total_entities += ent_count
         total_cooc += cooc_count
 
@@ -257,6 +259,7 @@ def run_graph(
     limit: int = 0,
     offset: int = 0,
     only_lang: str = "all",
+    batch_size: int = 16,
 ) -> None:
     with open(pickle_path, "rb") as f:
         all_messages: list[dict[str, Any]] = pickle.load(f)
@@ -300,7 +303,7 @@ def run_graph(
         new_messages = new_messages[:limit]
         print(f"Limited to {limit} messages (offset={offset}, total_new={total_new})")
 
-    build_graph_to_db(new_messages, db, debug=debug, known_message_ids=processed_ids, only_lang=only_lang)
+    build_graph_to_db(new_messages, db, debug=debug, known_message_ids=processed_ids, only_lang=only_lang, batch_size=batch_size)
 
     print("\nDone")
     stats = db.graph_stats()

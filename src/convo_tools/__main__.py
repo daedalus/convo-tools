@@ -42,7 +42,7 @@ def _build_extract_parser() -> argparse.ArgumentParser:
         prog=f"{sys.argv[0]} -m extract",
         description="Read JSON conversation exports, deduplicate, and save as pickle.",
     )
-    ap.add_argument("json_dir", type=Path, help="Directory containing .json files")
+    ap.add_argument("json_path", type=Path, help="JSON file or directory containing .json files")
     ap.add_argument(
         "pickle_path", nargs="?", type=Path, default=_P / "messages.pkl",
         help="Output pickle path (default: messages.pkl)",
@@ -84,6 +84,10 @@ def _build_graph_parser() -> argparse.ArgumentParser:
         choices=["all", "en", "es"],
         help="Only process messages in a specific language (default: all configured languages)",
     )
+    ap.add_argument(
+        "--batch-size", type=int, default=16,
+        help="Messages per entity-extraction batch (default: 16, lower = less memory)",
+    )
     return ap
 
 
@@ -92,7 +96,7 @@ def _build_full_parser() -> argparse.ArgumentParser:
         prog=f"{sys.argv[0]} -m full",
         description="Extract + graph in one step.",
     )
-    ap.add_argument("json_dir", type=Path, help="Directory containing .json files")
+    ap.add_argument("json_path", type=Path, help="JSON file or directory containing .json files")
     ap.add_argument(
         "pickle_path", nargs="?", type=Path, default=_P / "messages.pkl",
         help="Intermediate/output pickle path (default: messages.pkl)",
@@ -577,7 +581,7 @@ def main() -> int:
     elif mode == "split":
         run_split(args)
     elif mode == "extract":
-        run_extract(args.json_dir, args.pickle_path)
+        run_extract(args.json_path, args.pickle_path)
     elif mode == "graph":
         run_graph(
             args.pickle_path,
@@ -587,9 +591,10 @@ def main() -> int:
             limit=args.limit,
             offset=args.offset,
             only_lang=args.only_lang,
+            batch_size=args.batch_size,
         )
     elif mode == "full":
-        run_extract(args.json_dir, args.pickle_path)
+        run_extract(args.json_path, args.pickle_path)
         run_graph(
             args.pickle_path,
             db_path=args.db,
@@ -598,6 +603,7 @@ def main() -> int:
             limit=args.limit,
             offset=args.offset,
             only_lang=args.only_lang,
+            batch_size=args.batch_size,
         )
 
     return 0

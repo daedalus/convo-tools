@@ -39,7 +39,7 @@ def test_run_extract_basic(tmp_path: Path) -> None:
 
     out_pkl = tmp_path / "messages.pkl"
 
-    run_extract(json_dir=tmp_path, pickle_path=out_pkl)
+    run_extract(json_path=tmp_path, pickle_path=out_pkl)
 
     assert out_pkl.exists()
     msgs = pickle.loads(out_pkl.read_bytes())
@@ -61,7 +61,7 @@ def test_run_extract_dedup(tmp_path: Path) -> None:
     json_file2.write_text(json.dumps(data2))
 
     out_pkl = tmp_path / "messages.pkl"
-    run_extract(json_dir=tmp_path, pickle_path=out_pkl)
+    run_extract(json_path=tmp_path, pickle_path=out_pkl)
 
     msgs = pickle.loads(out_pkl.read_bytes())
     assert len(msgs) == 1
@@ -69,7 +69,7 @@ def test_run_extract_dedup(tmp_path: Path) -> None:
 
 def test_run_extract_no_json_files(tmp_path: Path, capsys) -> None:
     out_pkl = tmp_path / "messages.pkl"
-    run_extract(json_dir=tmp_path, pickle_path=out_pkl)
+    run_extract(json_path=tmp_path, pickle_path=out_pkl)
     out = capsys.readouterr().out
     assert "Found 0 conversation files" in out or "No JSON files" in out
 
@@ -79,6 +79,6 @@ def test_run_extract_malformed_json(tmp_path: Path, capsys) -> None:
     bad_file.write_text("not valid json")
     out_pkl = tmp_path / "messages.pkl"
 
-    run_extract(json_dir=tmp_path, pickle_path=out_pkl)
+    run_extract(json_path=tmp_path, pickle_path=out_pkl)
 
     assert out_pkl.exists()
