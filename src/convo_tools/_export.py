@@ -29,9 +29,9 @@ def graph_to_gexf(db: GraphDB, output_path: Path) -> None:
     for src, dst in db.get_edges_mentions():
         g.add_edge(src, dst, type="MENTIONS")
 
-    for src, dst in db.get_edges_cooc():
-        g.add_edge(src, dst, type="CO_OCCURS_WITH")
-        g.add_edge(dst, src, type="CO_OCCURS_WITH")
+    for src, dst, weight in db.get_edges_cooc():
+        g.add_edge(src, dst, type="CO_OCCURS_WITH", weight=weight)
+        g.add_edge(dst, src, type="CO_OCCURS_WITH", weight=weight)
 
     for src, dst, weight in db.get_edges_keywords():
         g.add_edge(src, dst, type="HAS_KEYWORD", weight=weight)

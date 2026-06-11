@@ -41,9 +41,10 @@ CREATE TABLE IF NOT EXISTS edge_mentions (
 );
 
 CREATE TABLE IF NOT EXISTS edge_cooc (
-    entity_a TEXT NOT NULL,
-    entity_b TEXT NOT NULL,
-    PRIMARY KEY (entity_a, entity_b)
+    entity_a_int INTEGER NOT NULL,
+    entity_b_int INTEGER NOT NULL,
+    weight INTEGER NOT NULL DEFAULT 1,
+    PRIMARY KEY (entity_a_int, entity_b_int)
 );
 
 CREATE TABLE IF NOT EXISTS edge_keyword (
@@ -57,6 +58,11 @@ CREATE TABLE IF NOT EXISTS processed_message (
     id TEXT PRIMARY KEY
 );
 
+CREATE TABLE IF NOT EXISTS entity_int (
+    int_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    entity_id TEXT NOT NULL UNIQUE
+);
+
 CREATE INDEX IF NOT EXISTS idx_node_label ON node(label);
 CREATE INDEX IF NOT EXISTS idx_node_name ON node(name);
 CREATE INDEX IF NOT EXISTS idx_node_entity_type ON node(entity_type);
@@ -64,8 +70,6 @@ CREATE INDEX IF NOT EXISTS idx_edge_contains_conv ON edge_contains(conv_id);
 CREATE INDEX IF NOT EXISTS idx_edge_contains_msg ON edge_contains(msg_id);
 CREATE INDEX IF NOT EXISTS idx_edge_mentions_entity ON edge_mentions(entity_id);
 CREATE INDEX IF NOT EXISTS idx_edge_mentions_msg ON edge_mentions(msg_id);
-CREATE INDEX IF NOT EXISTS idx_edge_cooc_a ON edge_cooc(entity_a);
-CREATE INDEX IF NOT EXISTS idx_edge_cooc_b ON edge_cooc(entity_b);
 CREATE INDEX IF NOT EXISTS idx_edge_keyword_kw ON edge_keyword(keyword_id);
 CREATE INDEX IF NOT EXISTS idx_edge_keyword_msg ON edge_keyword(msg_id);
 CREATE INDEX IF NOT EXISTS idx_edge_replies_parent ON edge_replies_to(parent_id);
@@ -214,11 +218,27 @@ class GraphDB:
             (msg_id, entity_id),
         )
 
+    def _ensure_entity_int(self, entity_id: str) -> int:
+        conn = self._conn()
+        conn.execute(
+            "INSERT OR IGNORE INTO entity_int (entity_id) VALUES (?)",
+            (entity_id,),
+        )
+        return conn.execute(
+            "SELECT int_id FROM entity_int WHERE entity_id = ?",
+            (entity_id,),
+        ).fetchone()["int_id"]
+
     def add_edge_cooc(self, entity_a: str, entity_b: str) -> None:
-        a, b = (entity_a, entity_b) if entity_a <= entity_b else (entity_b, entity_a)
+        a_int = self._ensure_entity_int(entity_a)
+        b_int = self._ensure_entity_int(entity_b)
+        if a_int == b_int:
+            return
+        a_int, b_int = (a_int, b_int) if a_int <= b_int else (b_int, a_int)
         self._conn().execute(
-            "INSERT OR IGNORE INTO edge_cooc (entity_a, entity_b) VALUES (?, ?)",
-            (a, b),
+            "INSERT INTO edge_cooc (entity_a_int, entity_b_int) VALUES (?, ?) "
+            "ON CONFLICT(entity_a_int, entity_b_int) DO UPDATE SET weight = weight + 1",
+            (a_int, b_int),
         )
 
     def add_edge_keyword(self, msg_id: str, keyword_id: str, weight: float) -> None:
@@ -245,11 +265,14 @@ class GraphDB:
         ).fetchall()
         return [(r["msg_id"], r["entity_id"]) for r in rows]
 
-    def get_edges_cooc(self) -> list[tuple[str, str]]:
+    def get_edges_cooc(self) -> list[tuple[str, str, int]]:
         rows = self._conn().execute(
-            "SELECT entity_a, entity_b FROM edge_cooc"
+            "SELECT a.entity_id AS entity_a, b.entity_id AS entity_b, weight "
+            "FROM edge_cooc "
+            "JOIN entity_int a ON edge_cooc.entity_a_int = a.int_id "
+            "JOIN entity_int b ON edge_cooc.entity_b_int = b.int_id"
         ).fetchall()
-        return [(r["entity_a"], r["entity_b"]) for r in rows]
+        return [(r["entity_a"], r["entity_b"], r["weight"]) for r in rows]
 
     def get_edges_keywords(self) -> list[tuple[str, str, float]]:
         rows = self._conn().execute(
@@ -280,6 +303,7 @@ class GraphDB:
         for table in ("edge_contains", "edge_replies_to", "edge_mentions",
                       "edge_cooc", "edge_keyword"):
             self._conn().execute(f"DELETE FROM {table}")
+        self._conn().execute("DELETE FROM entity_int")
 
     def clear_all(self) -> None:
         self.delete_all_nodes()
@@ -470,11 +494,14 @@ class GraphDB:
         entity_ids = self.get_entity_id_set()
         g.add_nodes_from(entity_ids)
         rows = self._conn().execute(
-            "SELECT entity_a, entity_b FROM edge_cooc"
+            "SELECT a.entity_id AS entity_a, b.entity_id AS entity_b, weight "
+            "FROM edge_cooc "
+            "JOIN entity_int a ON edge_cooc.entity_a_int = a.int_id "
+            "JOIN entity_int b ON edge_cooc.entity_b_int = b.int_id"
         ).fetchall()
         for r in rows:
             if r["entity_a"] in entity_ids and r["entity_b"] in entity_ids:
-                g.add_edge(r["entity_a"], r["entity_b"])
+                g.add_edge(r["entity_a"], r["entity_b"], weight=r["weight"])
         return g
 
     # ── Reply chain graph (NetworkX) ───────────────────────────────────

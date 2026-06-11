@@ -73,7 +73,7 @@ def test_build_graph_with_entities(tmp_path: Path) -> None:
     assert ("m2", "entity::PERSON::bob") in edges_mentions
     assert ("m2", "entity::ORG::google") in edges_mentions
 
-    edges_cooc = set(db.get_edges_cooc())
+    edges_cooc = set((a, b) for a, b, _ in db.get_edges_cooc())
     assert ("entity::ORG::openai", "entity::PERSON::alice") in edges_cooc or \
            ("entity::PERSON::alice", "entity::ORG::openai") in edges_cooc
     assert ("entity::ORG::google", "entity::PERSON::bob") in edges_cooc or \

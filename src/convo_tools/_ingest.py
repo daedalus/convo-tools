@@ -26,7 +26,7 @@ CREATE NODE TABLE IF NOT EXISTS Keyword (
 CREATE REL TABLE IF NOT EXISTS CONTAINS (FROM Conversation TO Message);
 CREATE REL TABLE IF NOT EXISTS REPLIES_TO (FROM Message TO Message);
 CREATE REL TABLE IF NOT EXISTS MENTIONS (FROM Message TO Entity);
-CREATE REL TABLE IF NOT EXISTS CO_OCCURS_WITH (FROM Entity TO Entity);
+CREATE REL TABLE IF NOT EXISTS CO_OCCURS_WITH (FROM Entity TO Entity, weight INT32 DEFAULT 1);
 CREATE REL TABLE IF NOT EXISTS HAS_KEYWORD (FROM Message TO Keyword, weight DOUBLE);
 """
 
@@ -59,12 +59,21 @@ def _node_rows(nodes: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
     return rows
 
 
-def _edge_rows(edges: set[tuple[str, str]]) -> list[dict[str, str]]:
-    return [{"from": a, "to": b} for a, b in edges]
+def _edge_rows(edges: set) -> list[dict[str, str]]:
+    rows = []
+    for e in edges:
+        a, b = e[0], e[1]
+        rows.append({"from": a, "to": b})
+    return rows
 
 
-def _kw_edge_rows(edges: list[tuple[str, str, float]]) -> list[dict[str, Any]]:
-    return [{"from": a, "to": b, "weight": w} for a, b, w in edges]
+def _kw_edge_rows(edges: set) -> list[dict[str, Any]]:
+    rows = []
+    for e in edges:
+        a, b = e[0], e[1]
+        w = e[2] if len(e) > 2 else 1
+        rows.append({"from": a, "to": b, "weight": w})
+    return rows
 
 
 def graph_to_kuzu(graph_data: dict[str, Any], db_path: str, overwrite: bool = False) -> None:
@@ -108,7 +117,7 @@ def graph_to_kuzu(graph_data: dict[str, Any], db_path: str, overwrite: bool = Fa
         ("CONTAINS", "Conversation", "Message", _edge_rows(graph_data.get("edges_contains", set())), False),
         ("REPLIES_TO", "Message", "Message", _edge_rows(graph_data.get("edges_replies_to", set())), False),
         ("MENTIONS", "Message", "Entity", _edge_rows(graph_data.get("edges_mentions", set())), False),
-        ("CO_OCCURS_WITH", "Entity", "Entity", _edge_rows(graph_data.get("edges_cooc", set())), False),
+        ("CO_OCCURS_WITH", "Entity", "Entity", _kw_edge_rows(graph_data.get("edges_cooc", set())), True),
         ("HAS_KEYWORD", "Message", "Keyword", _kw_edge_rows(graph_data.get("edges_keywords", [])), True),
     ]
 

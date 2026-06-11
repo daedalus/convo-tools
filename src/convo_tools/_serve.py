@@ -364,7 +364,7 @@ def co_occurring_entities(
         return [{"error": f"entity not found: {entity_id}"}]
 
     peers = []
-    for a, b in db.get_edges_cooc():
+    for a, b, w in db.get_edges_cooc():
         other = None
         if a == entity_id:
             other = b
