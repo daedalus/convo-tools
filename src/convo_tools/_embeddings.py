@@ -169,22 +169,41 @@ def compute_node2vec_embeddings(
     print(f"  {len(walks)} walks completed")
 
     vocab = {node: i for i, node in enumerate(g.nodes())}
+    n_nodes = len(vocab)
 
-    cooc = np.zeros((len(vocab), len(vocab)), dtype=np.float32)
+    from scipy.sparse import lil_matrix
+
+    cooc = lil_matrix((n_nodes, n_nodes), dtype=np.float32)
+    window = 5
     for walk in walks:
         for i, node in enumerate(walk):
-            for j in range(max(0, i - 5), min(len(walk), i + 6)):
+            vi = vocab[node]
+            for j in range(max(0, i - window), min(len(walk), i + window + 1)):
                 if i != j:
-                    cooc[vocab[node], vocab[walk[j]]] += 1
+                    cooc[vi, vocab[walk[j]]] += 1.0
 
     del walks
     gc.collect()
 
-    from numpy.linalg import svd
+    cooc_csr = cooc.tocsr()
+    del cooc
+    gc.collect()
 
-    U, _, _ = svd(cooc, full_matrices=False)
-    k = min(dim, U.shape[1])
-    U = U[:, :k]
+    from scipy.sparse.linalg import svds
+
+    k = min(dim, min(cooc_csr.shape) - 1, 64)
+    if k < 1:
+        return {}
+
+    try:
+        U, _, _ = svds(cooc_csr.astype(np.float64), k=k, niter=5)
+    except Exception:
+        from numpy.linalg import svd
+        U, _, _ = svd(cooc_csr.toarray().astype(np.float64), full_matrices=False)
+        U = U[:, :k]
+
+    del cooc_csr
+    gc.collect()
 
     embeddings = {}
     for node, idx in vocab.items():

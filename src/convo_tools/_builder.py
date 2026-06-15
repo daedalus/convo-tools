@@ -21,20 +21,33 @@ def _load_lang_config() -> dict[str, str]:
         return yaml.safe_load(f)
 
 
-_LANG_MODELS: dict[str, str] = {}
+_active_nlp: Any = None
+_active_model_name: str | None = None
 
 
 def _ensure_model(model_name: str) -> Any:
-    if model_name in _LANG_MODELS:
-        return _LANG_MODELS[model_name]
+    global _active_nlp, _active_model_name
+    if _active_model_name == model_name and _active_nlp is not None:
+        return _active_nlp
+    _unload_model()
     import spacy
     nlp = spacy.load(
         model_name,
         disable=["tagger", "parser", "attribute_ruler", "lemmatizer"],
     )
     nlp.max_length = 100_000
-    _LANG_MODELS[model_name] = nlp
+    _active_nlp = nlp
+    _active_model_name = model_name
     return nlp
+
+
+def _unload_model() -> None:
+    global _active_nlp, _active_model_name
+    if _active_nlp is not None:
+        _active_model_name = None
+        _active_nlp = None
+        import gc
+        gc.collect()
 
 
 def _extract_entities_from_messages(
@@ -191,17 +204,17 @@ def build_graph_to_db(
     total_cooc = 0
     print(f"\nExtracting entities from {len(all_messages)} messages...")
 
-    lang_groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    for msg in all_messages:
-        lang_groups[msg.get("lang", "unknown")].append(msg)
-
-    for lang, msgs in sorted(lang_groups.items()):
+    for lang in sorted(by_lang):
+        if lang not in lang_cfg:
+            continue
+        msgs = by_lang[lang]
         model_name = lang_cfg[lang]
         print(f"  [{lang}] {len(msgs)} messages -> {model_name}")
         nlp = _ensure_model(model_name)
         ent_count, cooc_count = _extract_entities_from_messages(msgs, nlp, db, debug=debug, batch_size=batch_size)
         total_entities += ent_count
         total_cooc += cooc_count
+    _unload_model()
 
     gc.collect()
     print(f"  entities: done ({total_entities} total)")
@@ -255,6 +268,9 @@ def build_graph_to_db(
     print(f"  Marked {len(new_msg_ids)} messages as fully processed")
 
     print(f"  RSS after TF-IDF: {_rss_mb():.0f} MB")
+
+    all_messages.clear()
+    by_lang.clear()
 
 
 def run_graph(
@@ -321,6 +337,9 @@ def run_graph(
     if timestamps:
         db.backfill_timestamps(timestamps)
         print(f"  Backfilled timestamps for {len(timestamps)} messages")
+
+    del all_messages, new_messages
+    gc.collect()
 
     if enrich:
         print("\nEnriching semantic attributes...")
