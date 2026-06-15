@@ -42,8 +42,10 @@ def _extract_entities_from_messages(
     nlp: Any,
     db: GraphDB,
     debug: bool = False,
-    batch_size: int = 16,
+    batch_size: int = 64,
 ) -> tuple[int, int]:
+    from convo_tools._util import _rss_mb
+
     entity_count = 0
     cooc_edges = 0
     max_len = nlp.max_length
@@ -51,9 +53,9 @@ def _extract_entities_from_messages(
     n_batches = (len(messages) + batch_size - 1) // batch_size
     batch_starts = list(range(0, len(messages), batch_size))
 
-    for batch_start in _progressbar(
-        batch_starts, n_batches,         prefix=f"  ner batches ", width=40
-    ):
+    for batch_idx, batch_start in enumerate(_progressbar(
+        batch_starts, n_batches, prefix="  ner batches ", width=40
+    )):
         batch = messages[batch_start : batch_start + batch_size]
 
         seen_per_msg: dict[int, set[str]] = defaultdict(set)
@@ -110,6 +112,10 @@ def _extract_entities_from_messages(
             db.add_mentions_batch(batch_mentions)
         if batch_cooc:
             db.add_cooc_batch(batch_cooc)
+
+        del batch_nodes, batch_mentions, batch_cooc, seen_per_msg
+        if batch_idx % 50 == 0:
+            gc.collect()
 
     return entity_count, cooc_edges
 
@@ -259,7 +265,7 @@ def run_graph(
     limit: int = 0,
     offset: int = 0,
     only_lang: str = "all",
-    batch_size: int = 16,
+    batch_size: int = 64,
     enrich: bool = True,
 ) -> None:
     with open(pickle_path, "rb") as f:

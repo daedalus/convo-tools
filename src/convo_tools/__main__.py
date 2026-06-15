@@ -89,8 +89,8 @@ def _build_graph_parser() -> argparse.ArgumentParser:
         help="Only process messages in a specific language (default: all configured languages)",
     )
     ap.add_argument(
-        "--batch-size", type=int, default=16,
-        help="Messages per entity-extraction batch (default: 16, lower = less memory)",
+        "--batch-size", type=int, default=64,
+        help="Messages per entity-extraction batch (default: 64, lower = less memory)",
     )
     return ap
 
