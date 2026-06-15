@@ -1092,6 +1092,229 @@ def entity_timeline_bucket(
     return results
 
 
+@mcp.tool()
+def semantic_search(
+    query: str,
+    top: int = 10,
+    use_embeddings: bool = True,
+    use_derived: bool = True,
+    use_keywords: bool = True,
+    min_similarity: float = 0.0,
+) -> list[dict[str, Any]]:
+    """
+    Semantic search combining keyword matching, derived edges, and embeddings.
+
+    Args:
+        query: Natural language query to search for.
+        top: Maximum results to return (default 10).
+        use_embeddings: Include embedding similarity (default True).
+        use_derived: Include derived edge traversal (default True).
+        use_keywords: Include keyword/TF-IDF matching (default True).
+        min_similarity: Minimum similarity threshold for embeddings (default 0.0).
+
+    Returns:
+        List of matching messages with scores, matched entities/keywords.
+    """
+    from convo_tools._semantic import semantic_search as _semantic_search
+    return _semantic_search(
+        _g(), query, top=top,
+        use_embeddings=use_embeddings,
+        use_derived=use_derived,
+        use_keywords=use_keywords,
+        min_similarity=min_similarity,
+    )
+
+
+@mcp.tool()
+def get_entity_neighborhood(
+    entity_id: str,
+    depth: int = 1,
+) -> dict[str, Any]:
+    """
+    Get the semantic neighborhood of an entity: related messages, entities, conversations.
+
+    Args:
+        entity_id: Entity node ID (e.g. "entity::ORG::python").
+        depth: Not used yet, reserved for future expansion.
+
+    Returns:
+        Dict with entity info, direct messages, related entities, conversations.
+    """
+    from convo_tools._semantic import get_entity_neighborhood as _get_entity_neighborhood
+    return _get_entity_neighborhood(_g(), entity_id, depth=depth)
+
+
+@mcp.tool()
+def traverse_entity_graph(
+    entity_id: str,
+    max_hops: int = 2,
+) -> dict[str, Any]:
+    """
+    Traverse the entity graph from a starting entity via similarity and bridge edges.
+
+    Args:
+        entity_id: Starting entity node ID.
+        max_hops: Maximum traversal depth (default 2).
+
+    Returns:
+        Dict with start entity, reachable count, and paths.
+    """
+    from convo_tools._semantic import traverse_from_entity
+    return traverse_from_entity(_g(), entity_id, max_hops=max_hops)
+
+
+@mcp.tool()
+def get_conversation_topics(
+    conv_id: str,
+) -> list[dict[str, Any]]:
+    """
+    Get the dominant topics (entities) of a conversation.
+
+    Args:
+        conv_id: Conversation node ID.
+
+    Returns:
+        List of topic entities with weights.
+    """
+    db = _g()
+    topics = db.get_conversation_topics(conv_id)
+    results = []
+    for eid, weight in topics:
+        node = db.get_node(eid)
+        if node:
+            results.append({
+                "entity_id": eid,
+                "name": node.get("name", ""),
+                "entity_type": node.get("entity_type", ""),
+                "weight": round(weight, 4),
+            })
+    return results
+
+
+@mcp.tool()
+def get_similar_messages(
+    msg_id: str,
+    top: int = 10,
+) -> list[dict[str, Any]]:
+    """
+    Find messages similar to a given message using entity/keyword overlap.
+
+    Args:
+        msg_id: Message node ID.
+        top: Maximum results (default 10).
+
+    Returns:
+        List of similar messages with similarity scores.
+    """
+    db = _g()
+    similar = db.get_similar_messages(msg_id, top=top)
+    results = []
+    for other_id, sim in similar:
+        node = db.get_node(other_id)
+        if node:
+            results.append({
+                "id": other_id,
+                "role": node.get("role", "?"),
+                "text_preview": node.get("text", "")[:300],
+                "similarity": round(sim, 4),
+            })
+    return results
+
+
+@mcp.tool()
+def find_similar_nodes(
+    node_id: str,
+    top: int = 10,
+    min_similarity: float = 0.0,
+) -> list[dict[str, Any]]:
+    """
+    Find nodes similar using learned embeddings (spectral or node2vec).
+
+    Args:
+        node_id: Node ID to find similar items for.
+        top: Maximum results (default 10).
+        min_similarity: Minimum cosine similarity threshold (default 0.0).
+
+    Returns:
+        List of similar nodes with cosine similarity scores.
+    """
+    db = _g()
+    similar = db.find_similar_nodes(node_id, top=top, min_similarity=min_similarity)
+    results = []
+    for other_id, score in similar:
+        node = db.get_node(other_id)
+        if node:
+            results.append({
+                "id": other_id,
+                "name": node.get("name", ""),
+                "label": node.get("label", ""),
+                "similarity": round(score, 4),
+            })
+    return results
+
+
+@mcp.tool()
+def get_entity_bridges(
+    entity_id: str,
+    top: int = 10,
+) -> list[dict[str, Any]]:
+    """
+    Get entities connected through high-centrality bridge entities.
+
+    Args:
+        entity_id: Entity node ID.
+        top: Maximum results (default 10).
+
+    Returns:
+        List of bridge-connected entities with path length and betweenness.
+    """
+    db = _g()
+    bridges = db.get_entity_bridges(entity_id, top=top)
+    results = []
+    for other_id, path_len, betweenness in bridges:
+        node = db.get_node(other_id)
+        if node:
+            results.append({
+                "entity_id": other_id,
+                "name": node.get("name", ""),
+                "entity_type": node.get("entity_type", ""),
+                "path_length": path_len,
+                "betweenness": round(betweenness, 4),
+            })
+    return results
+
+
+@mcp.tool()
+def get_ontology() -> dict[str, Any]:
+    """
+    Get the graph ontology: node types, edge types, and their attributes.
+
+    Returns:
+        Dict with node_types and edge_types definitions.
+    """
+    from convo_tools._ontology import NODE_TYPES, EDGE_TYPES
+    return {
+        "node_types": {
+            label: {
+                "description": sem.description,
+                "attributes": sem.attributes,
+            }
+            for label, sem in NODE_TYPES.items()
+        },
+        "edge_types": {
+            name: {
+                "domain": sem.domain,
+                "range": sem.range,
+                "description": sem.description,
+                "symmetric": sem.symmetric,
+                "weighted": sem.weighted,
+                "cardinality": sem.cardinality,
+            }
+            for name, sem in EDGE_TYPES.items()
+        },
+    }
+
+
 def run_serve(graph_path: str | None = None) -> None:
     if FastMCP is None:
         print("Error: mcp package not installed. Run: pip install convo-tools[mcp]")

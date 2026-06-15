@@ -3,7 +3,6 @@ from __future__ import annotations
 import gc
 import itertools
 import pickle
-import sqlite3
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
@@ -261,6 +260,7 @@ def run_graph(
     offset: int = 0,
     only_lang: str = "all",
     batch_size: int = 16,
+    enrich: bool = True,
 ) -> None:
     with open(pickle_path, "rb") as f:
         all_messages: list[dict[str, Any]] = pickle.load(f)
@@ -292,6 +292,9 @@ def run_graph(
 
     if not new_messages:
         print("No new messages to process. Graph is up to date.")
+        if enrich:
+            print("\nEnriching semantic attributes...")
+            db.enrich_all_semantics()
         db.close()
         return
 
@@ -312,6 +315,10 @@ def run_graph(
     if timestamps:
         db.backfill_timestamps(timestamps)
         print(f"  Backfilled timestamps for {len(timestamps)} messages")
+
+    if enrich:
+        print("\nEnriching semantic attributes...")
+        db.enrich_all_semantics()
 
     print("\nDone")
     stats = db.graph_stats()

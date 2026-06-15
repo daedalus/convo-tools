@@ -20,6 +20,12 @@ def graph_to_gexf(db: GraphDB, output_path: Path) -> None:
             attrs = {k: v for k, v in node.items() if k != "id" and v}
             g.add_node(node_id, **attrs)
 
+        if label == "Conversation":
+            for node in db.get_all_nodes_by_label(label):
+                meta = db.get_conv_meta(node["id"])
+                if meta:
+                    g.nodes[node["id"]].update(meta)
+
     for src, dst in db.get_edges_contains():
         g.add_edge(src, dst, type="CONTAINS")
 

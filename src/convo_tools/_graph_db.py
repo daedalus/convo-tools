@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import math
+import json
 import pickle
 import sqlite3
 import threading
@@ -20,7 +20,21 @@ CREATE TABLE IF NOT EXISTS node (
     text TEXT DEFAULT '',
     name TEXT DEFAULT '',
     entity_type TEXT DEFAULT '',
-    create_time REAL DEFAULT NULL
+    create_time REAL DEFAULT NULL,
+    depth_in_chain INTEGER DEFAULT NULL,
+    centrality_score REAL DEFAULT NULL,
+    mention_count INTEGER DEFAULT NULL,
+    domain TEXT DEFAULT '',
+    avg_tfidf REAL DEFAULT NULL,
+    document_frequency INTEGER DEFAULT NULL
+);
+
+CREATE TABLE IF NOT EXISTS node_conv_meta (
+    node_id TEXT PRIMARY KEY,
+    topic_summary TEXT DEFAULT '',
+    dominant_entities TEXT DEFAULT '',
+    depth_metrics TEXT DEFAULT '{}',
+    FOREIGN KEY (node_id) REFERENCES node(id)
 );
 
 CREATE TABLE IF NOT EXISTS edge_contains (
@@ -108,7 +122,28 @@ class GraphDB:
         cols = {r["name"] for r in conn.execute("PRAGMA table_info(node)").fetchall()}
         if "create_time" not in cols:
             conn.execute("ALTER TABLE node ADD COLUMN create_time REAL DEFAULT NULL")
-            conn.commit()
+        if "depth_in_chain" not in cols:
+            conn.execute("ALTER TABLE node ADD COLUMN depth_in_chain INTEGER DEFAULT NULL")
+        if "centrality_score" not in cols:
+            conn.execute("ALTER TABLE node ADD COLUMN centrality_score REAL DEFAULT NULL")
+        if "mention_count" not in cols:
+            conn.execute("ALTER TABLE node ADD COLUMN mention_count INTEGER DEFAULT NULL")
+        if "domain" not in cols:
+            conn.execute("ALTER TABLE node ADD COLUMN domain TEXT DEFAULT ''")
+        if "avg_tfidf" not in cols:
+            conn.execute("ALTER TABLE node ADD COLUMN avg_tfidf REAL DEFAULT NULL")
+        if "document_frequency" not in cols:
+            conn.execute("ALTER TABLE node ADD COLUMN document_frequency INTEGER DEFAULT NULL")
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS node_conv_meta (
+                node_id TEXT PRIMARY KEY,
+                topic_summary TEXT DEFAULT '',
+                dominant_entities TEXT DEFAULT '',
+                depth_metrics TEXT DEFAULT '{}',
+                FOREIGN KEY (node_id) REFERENCES node(id)
+            )"""
+        )
+        conn.commit()
 
     def close(self) -> None:
         if hasattr(self._local, "conn") and self._local.conn is not None:
@@ -153,9 +188,53 @@ class GraphDB:
                 ),
             )
 
+    def update_node_semantics(self, node_id: str, **semantic_attrs: Any) -> None:
+        allowed = {
+            "depth_in_chain", "centrality_score", "mention_count",
+            "domain", "avg_tfidf", "document_frequency",
+        }
+        updates = {k: v for k, v in semantic_attrs.items() if k in allowed}
+        if not updates:
+            return
+        set_clause = ", ".join(f"{k}=?" for k in updates)
+        values = list(updates.values()) + [node_id]
+        self._conn().execute(
+            f"UPDATE node SET {set_clause} WHERE id=?", values
+        )
+
+    def upsert_conv_meta(
+        self, node_id: str, topic_summary: str = "",
+        dominant_entities: str = "", depth_metrics: str = "{}"
+    ) -> None:
+        self._conn().execute(
+            """INSERT INTO node_conv_meta (node_id, topic_summary, dominant_entities, depth_metrics)
+               VALUES (?, ?, ?, ?)
+               ON CONFLICT(node_id) DO UPDATE SET
+                 topic_summary=excluded.topic_summary,
+                 dominant_entities=excluded.dominant_entities,
+                 depth_metrics=excluded.depth_metrics""",
+            (node_id, topic_summary, dominant_entities, depth_metrics),
+        )
+
+    def get_conv_meta(self, node_id: str) -> dict[str, Any] | None:
+        row = self._conn().execute(
+            "SELECT topic_summary, dominant_entities, depth_metrics FROM node_conv_meta WHERE node_id=?",
+            (node_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        return {
+            "topic_summary": row["topic_summary"],
+            "dominant_entities": row["dominant_entities"],
+            "depth_metrics": json.loads(row["depth_metrics"]),
+        }
+
     def get_node(self, node_id: str) -> dict[str, Any] | None:
         row = self._conn().execute(
-            "SELECT id, label, role, text, name, entity_type, create_time FROM node WHERE id = ?",
+            """SELECT id, label, role, text, name, entity_type, create_time,
+                      depth_in_chain, centrality_score, mention_count,
+                      domain, avg_tfidf, document_frequency
+               FROM node WHERE id = ?""",
             (node_id,),
         ).fetchone()
         if row is None:
@@ -188,14 +267,20 @@ class GraphDB:
             params.append(entity_type.upper())
         where = " AND ".join(clauses) if clauses else "1=1"
         rows = self._conn().execute(
-            f"SELECT id, label, role, text, name, entity_type, create_time FROM node WHERE {where} LIMIT ?",
+            f"""SELECT id, label, role, text, name, entity_type, create_time,
+                       depth_in_chain, centrality_score, mention_count,
+                       domain, avg_tfidf, document_frequency
+                FROM node WHERE {where} LIMIT ?""",
             (*params, limit),
         ).fetchall()
         return [dict(r) for r in rows]
 
     def get_all_nodes_by_label(self, label: str) -> list[dict[str, Any]]:
         rows = self._conn().execute(
-            "SELECT id, label, role, text, name, entity_type, create_time FROM node WHERE label = ?",
+            """SELECT id, label, role, text, name, entity_type, create_time,
+                      depth_in_chain, centrality_score, mention_count,
+                      domain, avg_tfidf, document_frequency
+               FROM node WHERE label = ?""",
             (label,),
         ).fetchall()
         return [dict(r) for r in rows]
@@ -583,13 +668,28 @@ class GraphDB:
 
     def to_pickle(self) -> dict[str, Any]:
         nodes: dict[str, dict[str, Any]] = {}
-        for row in self._conn().execute("SELECT * FROM node").fetchall():
+        for row in self._conn().execute(
+            """SELECT id, label, role, text, name, entity_type, create_time,
+                      depth_in_chain, centrality_score, mention_count,
+                      domain, avg_tfidf, document_frequency
+               FROM node"""
+        ).fetchall():
             attrs = {k: row[k] for k in row.keys() if k != "id"}
             attrs = {k: v for k, v in attrs.items() if v}
             attrs.setdefault("label", "")
             nodes[row["id"]] = attrs
+
+        conv_meta: dict[str, dict[str, Any]] = {}
+        for row in self._conn().execute("SELECT * FROM node_conv_meta").fetchall():
+            conv_meta[row["node_id"]] = {
+                "topic_summary": row["topic_summary"],
+                "dominant_entities": row["dominant_entities"],
+                "depth_metrics": json.loads(row["depth_metrics"]),
+            }
+
         return {
             "nodes": nodes,
+            "conv_meta": conv_meta,
             "edges_contains": set(self.get_edges_contains()),
             "edges_replies_to": set(self.get_edges_replies_to()),
             "edges_mentions": set(self.get_edges_mentions()),
@@ -610,3 +710,234 @@ class GraphDB:
         db._conn().commit()
         print(f"Imported {len(data.get('nodes', {}))} nodes into {db_path}")
         return db
+
+    # ── Semantic enrichment ─────────────────────────────────────────────
+
+    def enrich_entity_mentions(self) -> int:
+        conn = self._conn()
+        rows = conn.execute(
+            "SELECT entity_id, COUNT(*) as cnt FROM edge_mentions GROUP BY entity_id"
+        ).fetchall()
+        count = 0
+        for r in rows:
+            conn.execute(
+                "UPDATE node SET mention_count = ? WHERE id = ?",
+                (r["cnt"], r["entity_id"]),
+            )
+            count += 1
+        return count
+
+    def enrich_message_depth(self) -> int:
+        reply_g = self.build_reply_graph()
+        msg_ids = self.get_message_id_set()
+        depths: dict[str, int] = {}
+        for node in reply_g.nodes():
+            if node in msg_ids:
+                try:
+                    ancestors = nx.ancestors(reply_g, node)
+                    depths[node] = len(ancestors) if ancestors else 0
+                except nx.NetworkXError:
+                    depths[node] = 0
+        conn = self._conn()
+        for msg_id, depth in depths.items():
+            conn.execute(
+                "UPDATE node SET depth_in_chain = ? WHERE id = ?",
+                (depth, msg_id),
+            )
+        return len(depths)
+
+    def enrich_message_centrality(self) -> int:
+        reply_g = self.build_reply_graph()
+        if reply_g.number_of_nodes() < 2:
+            return 0
+        try:
+            centrality = nx.betweenness_centrality(reply_g, normalized=True, seed=42)
+        except Exception:
+            return 0
+        conn = self._conn()
+        for msg_id, score in centrality.items():
+            conn.execute(
+                "UPDATE node SET centrality_score = ? WHERE id = ?",
+                (score, msg_id),
+            )
+        return len(centrality)
+
+    def enrich_keyword_stats(self) -> int:
+        conn = self._conn()
+        rows = conn.execute(
+            """SELECT keyword_id, COUNT(*) as doc_freq, AVG(weight) as avg_w
+               FROM edge_keyword GROUP BY keyword_id"""
+        ).fetchall()
+        count = 0
+        for r in rows:
+            conn.execute(
+                "UPDATE node SET avg_tfidf = ?, document_frequency = ? WHERE id = ?",
+                (r["avg_w"], r["doc_freq"], r["keyword_id"]),
+            )
+            count += 1
+        return count
+
+    def enrich_conv_meta(self) -> int:
+        conn = self._conn()
+        conv_msgs = self.get_conv_msgs_map()
+        entity_msgs = self.get_entity_messages()
+        entity_to_msgs: dict[str, set[str]] = defaultdict(set)
+        for eid, mids in entity_msgs.items():
+            for mid in mids:
+                entity_to_msgs[mid].add(eid)
+
+        conv_ids = [r["id"] for r in conn.execute(
+            "SELECT id FROM node WHERE label = 'Conversation'"
+        ).fetchall()]
+
+        reply_g = self.build_reply_graph()
+        count = 0
+        for conv_id in conv_ids:
+            msg_ids = conv_msgs.get(conv_id, [])
+            if not msg_ids:
+                continue
+
+            entity_counts: Counter[str] = Counter()
+            for mid in msg_ids:
+                for eid in entity_to_msgs.get(mid, set()):
+                    entity_counts[eid] += 1
+
+            top_entities = [eid for eid, _ in entity_counts.most_common(5)]
+            top_entity_names = []
+            for eid in top_entities:
+                node = self.get_node(eid)
+                name = node.get("name", eid.split("::")[-1]) if node else eid.split("::")[-1]
+                top_entity_names.append(name)
+
+            depths = []
+            branching = 0
+            for mid in msg_ids:
+                if mid in reply_g:
+                    in_deg = reply_g.in_degree(mid)
+                    out_deg = reply_g.out_degree(mid)
+                    branching = max(branching, out_deg)
+                    try:
+                        ancestors = nx.ancestors(reply_g, mid)
+                        depths.append(len(ancestors))
+                    except nx.NetworkXError:
+                        depths.append(0)
+
+            depth_metrics = {
+                "max_depth": max(depths) if depths else 0,
+                "mean_depth": sum(depths) / len(depths) if depths else 0,
+                "branching_factor": branching,
+                "message_count": len(msg_ids),
+            }
+
+            self.upsert_conv_meta(
+                conv_id,
+                topic_summary="",
+                dominant_entities=", ".join(top_entity_names),
+                depth_metrics=json.dumps(depth_metrics),
+            )
+            count += 1
+        return count
+
+    def enrich_entity_domains(self) -> int:
+        g = self.build_entity_cooc_graph(min_weight=2)
+        if g.number_of_nodes() < 3:
+            return 0
+
+        try:
+            from networkx.algorithms.community import louvain_communities
+            communities = louvain_communities(g, seed=42)
+        except Exception:
+            return 0
+
+        domain_map: dict[str, str] = {}
+        for i, community in enumerate(communities):
+            members = []
+            for eid in community:
+                node = self.get_node(eid)
+                name = node.get("name", eid.split("::")[-1]) if node else eid.split("::")[-1]
+                members.append(name)
+            domain_label = ", ".join(members[:3])
+            for eid in community:
+                domain_map[eid] = domain_label
+
+        conn = self._conn()
+        for eid, domain in domain_map.items():
+            conn.execute(
+                "UPDATE node SET domain = ? WHERE id = ?",
+                (domain, eid),
+            )
+        return len(domain_map)
+
+    def enrich_all_semantics(self) -> dict[str, int]:
+        print("Enriching entity mention counts...")
+        n = self.enrich_entity_mentions()
+        self._conn().commit()
+        print(f"  Updated {n} entities")
+
+        print("Enriching message depth in reply chain...")
+        n = self.enrich_message_depth()
+        self._conn().commit()
+        print(f"  Updated {n} messages")
+
+        print("Enriching message centrality scores...")
+        n = self.enrich_message_centrality()
+        self._conn().commit()
+        print(f"  Updated {n} messages")
+
+        print("Enriching keyword statistics...")
+        n = self.enrich_keyword_stats()
+        self._conn().commit()
+        print(f"  Updated {n} keywords")
+
+        print("Enriching conversation metadata...")
+        n = self.enrich_conv_meta()
+        self._conn().commit()
+        print(f"  Updated {n} conversations")
+
+        print("Enriching entity domain clusters...")
+        n = self.enrich_entity_domains()
+        self._conn().commit()
+        print(f"  Updated {n} entity domains")
+
+        return {
+            "entity_mentions": n,
+            "message_depths": n,
+            "message_centrality": n,
+            "keyword_stats": n,
+            "conv_meta": n,
+            "entity_domains": n,
+        }
+
+    # ── Derived edges ───────────────────────────────────────────────────
+
+    def get_conversation_topics(self, conv_id: str) -> list[tuple[str, float]]:
+        from convo_tools._derived import get_conversation_topics
+        return get_conversation_topics(self, conv_id)
+
+    def get_similar_messages(self, msg_id: str, top: int = 10) -> list[tuple[str, float]]:
+        from convo_tools._derived import get_similar_messages
+        return get_similar_messages(self, msg_id, top)
+
+    def get_entity_bridges(self, entity_id: str, top: int = 10) -> list[tuple[str, int, float]]:
+        from convo_tools._derived import get_entity_bridges
+        return get_entity_bridges(self, entity_id, top)
+
+    def derive_all_edges(self) -> dict[str, int]:
+        from convo_tools._derived import derive_all
+        return derive_all(self)
+
+    # ── Embeddings ──────────────────────────────────────────────────────
+
+    def find_similar_nodes(self, node_id: str, top: int = 10, min_similarity: float = 0.0) -> list[tuple[str, float]]:
+        from convo_tools._embeddings import find_similar_nodes
+        return find_similar_nodes(self, node_id, top, min_similarity)
+
+    def find_similar_conversations(self, conv_id: str, top: int = 10, min_similarity: float = 0.0) -> list[tuple[str, float]]:
+        from convo_tools._embeddings import find_similar_conversations
+        return find_similar_conversations(self, conv_id, top, min_similarity)
+
+    def compute_embeddings(
+        self, dim: int = 32, method: str = "spectral", include_keywords: bool = False
+    ) -> dict[str, int]:
+        from convo_tools._embeddings import run_embeddings
+        return run_embeddings(self, dim=dim, method=method, include_keywords=include_keywords)
