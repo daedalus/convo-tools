@@ -181,13 +181,15 @@ def derive_entity_bridges(
     g = ig.Graph(n=len(entity_ids), edges=edges, directed=False)
     g.es["weight"] = weights
 
+    import time as _time
     print("  Computing betweenness centrality...", end="", flush=True)
+    _t0 = _time.monotonic()
     try:
         betweenness = g.betweenness()
     except Exception:
         print(" failed")
         return 0
-    print(" done")
+    print(f" {_time.monotonic() - _t0:.1f}s")
 
     bridge_indices = {
         i for i, score in enumerate(betweenness) if score >= min_betweenness

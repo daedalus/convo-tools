@@ -781,13 +781,19 @@ class GraphDB:
         return len(depths)
 
     def enrich_message_centrality(self) -> int:
+        import time as _time
+
         reply_g = self.build_reply_graph()
         if reply_g.vcount() < 2:
             return 0
+        print("  Computing message centrality...", end="", flush=True)
+        _t0 = _time.monotonic()
         try:
             betweenness = reply_g.betweenness()
         except Exception:
+            print(" failed")
             return 0
+        print(f" {_time.monotonic() - _t0:.1f}s")
         conn = self._conn()
         idx_to_id = reply_g._idx_to_id
         for v in reply_g.vs:

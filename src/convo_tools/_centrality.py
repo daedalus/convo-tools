@@ -51,10 +51,14 @@ def run_centrality(db_path: str | Path, args: argparse.Namespace) -> None:
     samples = min(samples, n)
     exact = args.exact or samples >= n
 
-    print(f"\nComputing betweenness centrality{' (exact)' if exact else f' (sampled, k={samples})'}...")
+    import time as _time
+
+    print(f"\nComputing betweenness centrality{' (exact)' if exact else f' (sampled, k={samples})'}...", end="", flush=True)
     sys.stdout.flush()
+    _t0 = _time.monotonic()
 
     betweenness = lg.betweenness() if exact else lg.betweenness(cutoff=samples)
+    print(f" {_time.monotonic() - _t0:.1f}s")
 
     sorted_cent = sorted(enumerate(betweenness), key=lambda x: -x[1])
 
