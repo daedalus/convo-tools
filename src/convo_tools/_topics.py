@@ -9,8 +9,6 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     import argparse
 
-import networkx as nx
-
 from convo_tools._graph_db import GraphDB
 
 
@@ -31,12 +29,14 @@ def _entity_type(entity_id: str, db: GraphDB) -> str:
 
 
 def run_topics(db_path: str | Path, args: argparse.Namespace) -> None:
+    import igraph as ig
+
     db = GraphDB(db_path)
 
     g = db.build_entity_cooc_graph(min_weight=args.min_weight)
 
-    n = g.number_of_nodes()
-    m = g.number_of_edges()
+    n = g.vcount()
+    m = g.ecount()
     print(f"Entity co-occurrence graph: {n} nodes, {m} edges")
 
     if n < 2:
@@ -44,7 +44,7 @@ def run_topics(db_path: str | Path, args: argparse.Namespace) -> None:
         db.close()
         return
 
-    components = sorted(nx.connected_components(g), key=len, reverse=True)
+    components = sorted(g.components(), key=len, reverse=True)
     large_components = [c for c in components if len(c) >= 3]
     print(f"  Connected components: {len(components)} ({len(components) - len(large_components)} too small for Louvain)")
 
@@ -53,13 +53,16 @@ def run_topics(db_path: str | Path, args: argparse.Namespace) -> None:
         db.close()
         return
 
-    communities: list[frozenset[str]] = []
+    communities: list[list[int]] = []
     for comp in large_components:
         sg = g.subgraph(comp)
-        print(f"\n  Running Louvain on component with {sg.number_of_nodes()} nodes...")
+        print(f"\n  Running Louvain on component with {sg.vcount()} nodes...")
         sys.stdout.flush()
-        comms = nx.community.louvain_communities(sg, seed=42)
-        communities.extend(comms)
+        try:
+            comms_result = sg.community_multilevel(weights=sg.es["weight"], return_levels=False)
+            communities.extend([list(c) for c in comms_result])
+        except Exception:
+            communities.append(list(comp))
 
     communities = sorted(communities, key=len, reverse=True)
     print(f"\n  Found {len(communities)} communities across all components")
@@ -77,14 +80,14 @@ def run_topics(db_path: str | Path, args: argparse.Namespace) -> None:
         display_idx += 1
 
         comm_g = g.subgraph(comm)
-        deg = dict(comm_g.degree())
+        deg = {v["name"]: comm_g.degree(v.index) for v in comm_g.vs}
         top = sorted(deg.items(), key=lambda x: -x[1])[: args.top]
 
         type_counts: Counter[str] = Counter()
-        for eid in comm:
-            type_counts[_entity_type(eid, db)] += 1
+        for v in comm_g.vs:
+            type_counts[_entity_type(v["name"], db)] += 1
 
-        print(f"Cluster {display_idx} ({len(comm)} entities, {comm_g.number_of_edges()} internal edges)")
+        print(f"Cluster {display_idx} ({len(comm)} entities, {comm_g.ecount()} internal edges)")
         type_summary = " | ".join(
             f"{t}: {c}" for t, c in type_counts.most_common(5) if t
         )
@@ -99,8 +102,8 @@ def run_topics(db_path: str | Path, args: argparse.Namespace) -> None:
             print(f"    {line}")
 
         cluster_msgs: set[str] = set()
-        for eid in comm:
-            cluster_msgs |= entity_msgs.get(eid, set())
+        for v in comm_g.vs:
+            cluster_msgs |= entity_msgs.get(v["name"], set())
 
         kw_counter: Counter[str] = Counter()
         for mid in cluster_msgs:
@@ -126,8 +129,9 @@ def run_topics(db_path: str | Path, args: argparse.Namespace) -> None:
                     continue
                 row_idx += 1
                 comm_g = g.subgraph(comm)
-                deg = dict(comm_g.degree())
-                for eid in sorted(comm):
+                deg = {v["name"]: comm_g.degree(v.index) for v in comm_g.vs}
+                for v in comm_g.vs:
+                    eid = v["name"]
                     w.writerow([
                         eid,
                         _entity_name(eid, db),

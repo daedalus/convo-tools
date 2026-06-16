@@ -5,7 +5,7 @@ import json
 import sqlite3
 from typing import TYPE_CHECKING, Any
 
-import networkx as nx
+import igraph as ig
 import numpy as np
 
 if TYPE_CHECKING:
@@ -110,38 +110,55 @@ def compute_node2vec_embeddings(
     q: float = 1.0,
     include_keywords: bool = False,
 ) -> dict[str, np.ndarray]:
-    g = nx.Graph()
+    id_to_idx: dict[str, int] = {}
+    edges: list[tuple[int, int]] = []
+    weights: list[float] = []
+
+    def _get_idx(name: str) -> int:
+        if name not in id_to_idx:
+            id_to_idx[name] = len(id_to_idx)
+        return id_to_idx[name]
 
     for src, dst in db.get_edges_mentions():
-        g.add_edge(src, dst, weight=1.0)
+        edges.append((_get_idx(src), _get_idx(dst)))
+        weights.append(1.0)
 
-    for src, dst, weight in db.get_edges_cooc():
-        g.add_edge(src, dst, weight=float(weight))
+    for r in db.get_edges_cooc():
+        src, dst, weight = r["entity_a"], r["entity_b"], r["weight"]
+        edges.append((_get_idx(src), _get_idx(dst)))
+        weights.append(float(weight))
 
     if include_keywords:
-        for src, dst, weight in db.get_edges_keywords():
-            g.add_edge(src, dst, weight=weight)
+        for r in db.get_edges_keywords():
+            src, dst, weight = r["msg_id"], r["keyword_id"], r["weight"]
+            edges.append((_get_idx(src), _get_idx(dst)))
+            weights.append(weight)
 
-    if g.number_of_nodes() < 3:
+    n_nodes = len(id_to_idx)
+    if n_nodes < 3:
         return {}
 
-    print(f"  Graph: {g.number_of_nodes()} nodes, {g.number_of_edges()} edges")
+    g = ig.Graph(n=n_nodes, edges=edges, directed=False)
+    g.simplify(multiple=True, loops=True, combine_edges="sum")
+
+    print(f"  Graph: {g.vcount()} nodes, {g.ecount()} edges")
 
     from collections import defaultdict
 
-    neighbors = defaultdict(list)
-    for u, v in g.edges():
-        neighbors[u].append(v)
-        neighbors[v].append(u)
+    neighbors: dict[int, list[int]] = defaultdict(list)
+    for e in g.es:
+        neighbors[e.source].append(e.target)
+        neighbors[e.target].append(e.source)
 
     import random
     random.seed(42)
 
     walks: list[list[str]] = []
-    nodes = list(g.nodes())
+    idx_to_id = {i: name for name, i in id_to_idx.items()}
+    node_indices = list(range(n_nodes))
     for _ in range(num_walks):
-        random.shuffle(nodes)
-        for node in nodes:
+        random.shuffle(node_indices)
+        for node in node_indices:
             walk = [node]
             for _ in range(walk_length - 1):
                 current = walk[-1]
@@ -164,11 +181,11 @@ def compute_node2vec_embeddings(
                         walk.append(random.choice(nbs))
                 else:
                     walk.append(random.choice(nbs))
-            walks.append(walk)
+            walks.append([idx_to_id[i] for i in walk])
 
     print(f"  {len(walks)} walks completed")
 
-    vocab = {node: i for i, node in enumerate(g.nodes())}
+    vocab = id_to_idx
     n_nodes = len(vocab)
 
     from scipy.sparse import lil_matrix

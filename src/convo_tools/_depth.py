@@ -10,8 +10,6 @@ if TYPE_CHECKING:
     from pathlib import Path
     from typing import Any
 
-import networkx as nx
-
 from convo_tools._graph_db import GraphDB
 
 
@@ -27,6 +25,8 @@ def _conv_title(conv_id: str, db: GraphDB, edges_contains: list[tuple[str, str]]
 
 
 def run_depth(db_path: str | Path, args: argparse.Namespace) -> None:
+    import igraph as ig
+
     db = GraphDB(db_path)
 
     message_nodes = db.get_all_nodes_by_label("Message")
@@ -38,31 +38,41 @@ def run_depth(db_path: str | Path, args: argparse.Namespace) -> None:
         db.close()
         return
 
-    g = nx.DiGraph()
-    g.add_edges_from(edges_replies_to)
+    id_to_idx: dict[str, int] = {}
     all_msg_ids = {n["id"] for n in message_nodes}
-    g.add_nodes_from(all_msg_ids)
 
-    if not nx.is_directed_acyclic_graph(g):
-        cycles = list(nx.simple_cycles(g))
-        print(f"Warning: reply graph has {len(cycles)} cycle(s). Computing DAG on largest acyclic subset.", file=sys.stderr)
-        for cycle in cycles:
-            print(f"  Cycle: {' -> '.join(cycle[:5])}{'...' if len(cycle) > 5 else ''}", file=sys.stderr)
+    def _get_idx(name: str) -> int:
+        if name not in id_to_idx:
+            id_to_idx[name] = len(id_to_idx)
+        return id_to_idx[name]
+
+    g_edges: list[tuple[int, int]] = []
+    for p, c in edges_replies_to:
+        g_edges.append((_get_idx(p), _get_idx(c)))
+
+    for mid in all_msg_ids:
+        _get_idx(mid)
+
+    g = ig.Graph(n=len(id_to_idx), edges=g_edges, directed=True)
+    g.vs["name"] = list(id_to_idx.keys())
+    idx_to_id = {i: name for name, i in id_to_idx.items()}
+
+    if not g.is_dag():
+        print("Warning: reply graph has cycles. Computing depth on DAG subset.", file=sys.stderr)
 
     try:
-        topo = list(nx.topological_sort(g))
-    except nx.NetworkXUnfeasible:
-        print("Graph has cycles, removing back edges...")
-        g = nx.DiGraph(nx.algorithms.dag.transitive_reduction(nx.DiGraph(g) if nx.is_directed_acyclic_graph(g) else nx.DiGraph()))
-        topo = list(nx.topological_sort(g))
+        topo = g.topological_sorting()
+    except Exception:
+        print("Graph has cycles, computing longest paths anyway...", file=sys.stderr)
+        topo = list(range(g.vcount()))
 
     depth: dict[str, int] = {}
     for node_id in topo:
-        preds = list(g.predecessors(node_id))
+        preds = g.predecessors(node_id)
         if not preds:
-            depth[node_id] = 1
+            depth[idx_to_id[node_id]] = 1
         else:
-            depth[node_id] = max(depth[p] for p in preds) + 1
+            depth[idx_to_id[node_id]] = max(depth[idx_to_id[p]] for p in preds) + 1
 
     conv_msg_ids: dict[str, list[str]] = defaultdict(list)
     for conv_id, msg_id in edges_contains:

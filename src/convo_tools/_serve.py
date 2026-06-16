@@ -7,8 +7,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-import networkx as nx
-
 from convo_tools._graph_db import GraphDB
 
 try:
@@ -579,16 +577,19 @@ def entity_centrality(
     db = _g()
     cg = db.build_entity_cooc_graph(min_weight=min_weight)
 
-    n = cg.number_of_nodes()
+    n = cg.vcount()
     if n < 2:
         return []
 
     k = min(500, n)
     exact = n <= 500
-    centrality = nx.betweenness_centrality(cg, k=None if exact else k, normalized=True, seed=42, endpoints=False)
+    betweenness = cg.betweenness() if exact else cg.betweenness(cutoff=max(1, k))
 
+    idx_to_id = cg._idx_to_id
     results = []
-    for eid, score in centrality.items():
+    for v in cg.vs:
+        score = betweenness[v.index]
+        eid = v["name"]
         node = db.get_node(eid) or {}
         etype = node.get("entity_type", "")
         if entity_type and etype != entity_type.upper():
@@ -598,7 +599,7 @@ def entity_centrality(
             "name": node.get("name", ""),
             "entity_type": etype,
             "betweenness": round(score, 6),
-            "degree": cg.degree(eid),
+            "degree": cg.degree(v.index),
         })
 
     results.sort(key=lambda x: -x["betweenness"])
@@ -878,20 +879,36 @@ def reply_chain_stats(
             "depth_distribution": [],
         }
 
-    rg = nx.DiGraph()
-    rg.add_edges_from((p, c) for p, c in edges_replies_to if p in conv_msg_ids and c in conv_msg_ids)
+    import igraph as ig
+
+    rg = ig.Graph(directed=True)
+    id_to_idx: dict[str, int] = {}
+    rg_edges: list[tuple[int, int]] = []
+
+    def _get_idx(name: str) -> int:
+        if name not in id_to_idx:
+            id_to_idx[name] = len(id_to_idx)
+        return id_to_idx[name]
+
+    for p, c in edges_replies_to:
+        if p in conv_msg_ids and c in conv_msg_ids:
+            rg_edges.append((_get_idx(p), _get_idx(c)))
+
+    rg.add_vertices(len(id_to_idx))
+    rg.vs["name"] = list(id_to_idx.keys())
+    rg.add_edges(rg_edges)
+
+    idx_to_id = {i: name for name, i in id_to_idx.items()}
 
     try:
-        topo = list(nx.topological_sort(rg))
-    except nx.NetworkXUnfeasible:
-        dag = nx.DiGraph(nx.algorithms.dag.transitive_reduction(nx.DiGraph(rg)))
-        topo = list(nx.topological_sort(dag))
-        rg = dag
+        topo = rg.topological_sorting()
+    except Exception:
+        topo = rg.topological_sorting()
 
     depth_map: dict[str, int] = {}
     for nid in topo:
-        preds = list(rg.predecessors(nid))
-        depth_map[nid] = 1 if not preds else max(depth_map[p] for p in preds) + 1
+        preds = rg.predecessors(nid)
+        depth_map[idx_to_id[nid]] = 1 if not preds else max(depth_map[idx_to_id[p]] for p in preds) + 1
 
     depths = list(depth_map.values())
     if not depths:

@@ -4,11 +4,6 @@ import sqlite3
 from collections import Counter, defaultdict
 from typing import TYPE_CHECKING, Any
 
-import networkx as nx
-
-if TYPE_CHECKING:
-    from pathlib import Path
-
 from convo_tools._graph_db import GraphDB
 from convo_tools._util import _progressbar
 

@@ -13,7 +13,7 @@ authors = [
     {name = "Dar\u00edo Clavijo", email = "clavijodario@gmail.com"}
 ]
 dependencies = [
-    "networkx",
+    "python-igraph",
     "pandas",
     "spacy",
     "scikit-learn",

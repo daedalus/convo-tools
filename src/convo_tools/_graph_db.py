@@ -7,8 +7,6 @@ import threading
 from collections import Counter, defaultdict
 from typing import TYPE_CHECKING, Any
 
-import networkx as nx
-
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -609,37 +607,59 @@ class GraphDB:
         ).fetchall()
         return {r["id"] for r in rows}
 
-    # ── Entity co-occurrence graph (NetworkX) ──────────────────────────
+    # ── Entity co-occurrence graph (igraph) ───────────────────────────
 
-    def build_entity_cooc_graph(self, min_weight: int = 1) -> nx.Graph:
-        g = nx.Graph()
+    def build_entity_cooc_graph(self, min_weight: int = 1):
+        import igraph as ig
+
         entity_ids = self.get_entity_id_set()
-        g.add_nodes_from(entity_ids)
-        cursor = self._conn().execute(
+        id_to_idx = {eid: i for i, eid in enumerate(sorted(entity_ids))}
+        idx_to_id = {i: eid for eid, i in id_to_idx.items()}
+
+        edges: list[tuple[int, int]] = []
+        weights: list[int] = []
+        for r in self._conn().execute(
             "SELECT a.entity_id AS entity_a, b.entity_id AS entity_b, weight "
             "FROM edge_cooc "
             "JOIN entity_int a ON edge_cooc.entity_a_int = a.int_id "
             "JOIN entity_int b ON edge_cooc.entity_b_int = b.int_id "
             "WHERE weight >= ?",
             (min_weight,),
-        )
-        g.add_edges_from(
-            (r["entity_a"], r["entity_b"], {"weight": r["weight"]})
-            for r in cursor
-            if r["entity_a"] in entity_ids and r["entity_b"] in entity_ids
-        )
+        ):
+            a_idx = id_to_idx.get(r["entity_a"])
+            b_idx = id_to_idx.get(r["entity_b"])
+            if a_idx is not None and b_idx is not None:
+                edges.append((a_idx, b_idx))
+                weights.append(r["weight"])
+
+        g = ig.Graph(n=len(entity_ids), edges=edges, directed=False)
+        g.vs["name"] = sorted(entity_ids)
+        g.es["weight"] = weights
+        g._idx_to_id = idx_to_id
+        g._id_to_idx = id_to_idx
         return g
 
-    # ── Reply chain graph (NetworkX) ───────────────────────────────────
+    # ── Reply chain graph (igraph) ───────────────────────────────────
 
-    def build_reply_graph(self) -> nx.DiGraph:
-        g = nx.DiGraph()
-        rows = self._conn().execute(
-            "SELECT parent_id, child_id FROM edge_replies_to"
-        ).fetchall()
-        g.add_edges_from((r["parent_id"], r["child_id"]) for r in rows)
+    def build_reply_graph(self):
+        import igraph as ig
+
         msg_ids = self.get_message_id_set()
-        g.add_nodes_from(msg_ids)
+        id_to_idx = {eid: i for i, eid in enumerate(sorted(msg_ids))}
+
+        edges: list[tuple[int, int]] = []
+        for r in self._conn().execute(
+            "SELECT parent_id, child_id FROM edge_replies_to"
+        ):
+            p = id_to_idx.get(r["parent_id"])
+            c = id_to_idx.get(r["child_id"])
+            if p is not None and c is not None:
+                edges.append((p, c))
+
+        g = ig.Graph(n=len(msg_ids), edges=edges, directed=True)
+        g.vs["name"] = sorted(msg_ids)
+        g._idx_to_id = {i: eid for eid, i in id_to_idx.items()}
+        g._id_to_idx = id_to_idx
         return g
 
     # ── Stats ──────────────────────────────────────────────────────────
@@ -726,17 +746,32 @@ class GraphDB:
             count += 1
         return count
 
+    @staticmethod
+    def _igraph_ancestors(g, vertex_idx: int) -> set[int]:
+        visited: set[int] = set()
+        queue = [vertex_idx]
+        while queue:
+            v = queue.pop()
+            for pred in g.predecessors(v):
+                if pred not in visited:
+                    visited.add(pred)
+                    queue.append(pred)
+        return visited
+
     def enrich_message_depth(self) -> int:
         reply_g = self.build_reply_graph()
         msg_ids = self.get_message_id_set()
+        idx_to_id = reply_g._idx_to_id
+        id_to_idx = reply_g._id_to_idx
         depths: dict[str, int] = {}
-        for node in reply_g.nodes():
-            if node in msg_ids:
+        for v in reply_g.vs:
+            eid = v["name"]
+            if eid in msg_ids:
                 try:
-                    ancestors = nx.ancestors(reply_g, node)
-                    depths[node] = len(ancestors) if ancestors else 0
-                except nx.NetworkXError:
-                    depths[node] = 0
+                    ancestors = self._igraph_ancestors(reply_g, v.index)
+                    depths[eid] = len(ancestors) if ancestors else 0
+                except Exception:
+                    depths[eid] = 0
         conn = self._conn()
         for msg_id, depth in depths.items():
             conn.execute(
@@ -747,19 +782,21 @@ class GraphDB:
 
     def enrich_message_centrality(self) -> int:
         reply_g = self.build_reply_graph()
-        if reply_g.number_of_nodes() < 2:
+        if reply_g.vcount() < 2:
             return 0
         try:
-            centrality = nx.betweenness_centrality(reply_g, normalized=True, seed=42)
+            betweenness = reply_g.betweenness()
         except Exception:
             return 0
         conn = self._conn()
-        for msg_id, score in centrality.items():
+        idx_to_id = reply_g._idx_to_id
+        for v in reply_g.vs:
+            score = betweenness[v.index]
             conn.execute(
                 "UPDATE node SET centrality_score = ? WHERE id = ?",
-                (score, msg_id),
+                (score, v["name"]),
             )
-        return len(centrality)
+        return len(reply_g.vs)
 
     def enrich_keyword_stats(self) -> int:
         conn = self._conn()
@@ -811,14 +848,15 @@ class GraphDB:
             depths = []
             branching = 0
             for mid in msg_ids:
-                if mid in reply_g:
-                    in_deg = reply_g.in_degree(mid)
-                    out_deg = reply_g.out_degree(mid)
+                if mid in reply_g._id_to_idx:
+                    v_idx = reply_g._id_to_idx[mid]
+                    in_deg = reply_g.indegree(v_idx)
+                    out_deg = reply_g.outdegree(v_idx)
                     branching = max(branching, out_deg)
                     try:
-                        ancestors = nx.ancestors(reply_g, mid)
+                        ancestors = self._igraph_ancestors(reply_g, v_idx)
                         depths.append(len(ancestors))
-                    except nx.NetworkXError:
+                    except Exception:
                         depths.append(0)
 
             depth_metrics = {
