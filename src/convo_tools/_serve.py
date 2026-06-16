@@ -742,25 +742,59 @@ def topic_clusters(
         List of clusters, each with id, size, entity_type_distribution,
         top_entities list, and top_keywords.
     """
-    db = _g()
-    cg = db.build_entity_cooc_graph(min_weight=min_weight)
+    import igraph as ig
 
-    if cg.number_of_nodes() < 2:
+    db = _g()
+    entity_ids = db.get_entity_id_set()
+
+    if len(entity_ids) < 2:
         return []
+
+    id_to_idx = {eid: i for i, eid in enumerate(sorted(entity_ids))}
+    idx_to_id = {i: eid for eid, i in id_to_idx.items()}
+
+    print("  Loading co-occurrence edges...", end="", flush=True)
+    edges: list[tuple[int, int]] = []
+    weights: list[int] = []
+    for r in db._conn().execute(
+        "SELECT a.entity_id AS entity_a, b.entity_id AS entity_b, weight "
+        "FROM edge_cooc "
+        "JOIN entity_int a ON edge_cooc.entity_a_int = a.int_id "
+        "JOIN entity_int b ON edge_cooc.entity_b_int = b.int_id "
+        f"WHERE weight >= {min_weight}"
+    ):
+        a_idx = id_to_idx.get(r["entity_a"])
+        b_idx = id_to_idx.get(r["entity_b"])
+        if a_idx is not None and b_idx is not None:
+            edges.append((a_idx, b_idx))
+            weights.append(r["weight"])
+    print(f" {len(edges)} edges")
+
+    if not edges:
+        return []
+
+    cg = ig.Graph(n=len(entity_ids), edges=edges, directed=False)
+    cg.es["weight"] = weights
 
     entity_msgs = db.get_entity_messages()
     msg_keywords = db.get_message_keywords()
 
-    components = sorted(nx.connected_components(cg), key=len, reverse=True)
-    large = [c for c in components if len(c) >= 3]
+    components = cg.connected_components()
+    large = sorted([c for c in components if len(c) >= 3], key=len, reverse=True)
 
+    print(f"  Processing {len(large)} components...")
     result_clusters: list[dict[str, Any]] = []
-    for comp in large:
+    for comp_idx, comp in enumerate(large):
         if len(comp) < min_size:
             continue
+
+        bar_filled = int(40 * (comp_idx + 1) / len(large))
+        print(f"\r  clusters [{'#' * bar_filled}{'.' * (40 - bar_filled)}] {comp_idx + 1}/{len(large)}", end="", flush=True)
+
         sg = cg.subgraph(comp)
         try:
-            comms = nx.community.louvain_communities(sg, seed=42)
+            comms_result = sg.community_multilevel(weights=sg.es["weight"], return_levels=False)
+            comms = [frozenset(component) for component in comms_result]
         except Exception:
             comms = [frozenset(comp)]
 
@@ -772,12 +806,12 @@ def topic_clusters(
             top = sorted(deg.items(), key=lambda x: -x[1])[:top_entities]
 
             type_counts: Counter[str] = Counter()
-            for eid in comm:
-                type_counts[_entity_type(db, eid)] += 1
+            for idx in comm:
+                type_counts[_entity_type(db, idx_to_id[idx])] += 1
 
             cluster_msgs: set[str] = set()
-            for eid in comm:
-                cluster_msgs |= entity_msgs.get(eid, set())
+            for idx in comm:
+                cluster_msgs |= entity_msgs.get(idx_to_id[idx], set())
 
             kw_counter: Counter[str] = Counter()
             for mid in cluster_msgs:
@@ -789,15 +823,16 @@ def topic_clusters(
             result_clusters.append({
                 "cluster_id": len(result_clusters) + 1,
                 "entity_count": len(comm),
-                "internal_edges": comm_g.number_of_edges(),
+                "internal_edges": comm_g.ecount(),
                 "type_distribution": dict(type_counts.most_common(10)),
                 "top_entities": [
-                    {"name": _entity_name(db, eid), "degree": d, "entity_type": _entity_type(db, eid)}
+                    {"name": _entity_name(db, idx_to_id[eid]), "degree": d, "entity_type": _entity_type(db, idx_to_id[eid])}
                     for eid, d in top
                 ],
                 "top_keywords": [{"keyword": kw, "count": c} for kw, c in kw_counter.most_common(5)],
             })
 
+    print()
     return result_clusters
 
 
