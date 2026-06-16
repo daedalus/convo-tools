@@ -618,17 +618,19 @@ class GraphDB:
         g = nx.Graph()
         entity_ids = self.get_entity_id_set()
         g.add_nodes_from(entity_ids)
-        rows = self._conn().execute(
+        cursor = self._conn().execute(
             "SELECT a.entity_id AS entity_a, b.entity_id AS entity_b, weight "
             "FROM edge_cooc "
             "JOIN entity_int a ON edge_cooc.entity_a_int = a.int_id "
             "JOIN entity_int b ON edge_cooc.entity_b_int = b.int_id "
             "WHERE weight >= ?",
             (min_weight,),
-        ).fetchall()
-        for r in rows:
-            if r["entity_a"] in entity_ids and r["entity_b"] in entity_ids:
-                g.add_edge(r["entity_a"], r["entity_b"], weight=r["weight"])
+        )
+        g.add_edges_from(
+            (r["entity_a"], r["entity_b"], {"weight": r["weight"]})
+            for r in cursor
+            if r["entity_a"] in entity_ids and r["entity_b"] in entity_ids
+        )
         return g
 
     # ── Reply chain graph (NetworkX) ───────────────────────────────────
@@ -839,26 +841,52 @@ class GraphDB:
         return count
 
     def enrich_entity_domains(self) -> int:
-        g = self.build_entity_cooc_graph(min_weight=2)
-        if g.number_of_nodes() < 3:
+        import igraph as ig
+
+        entity_ids = self.get_entity_id_set()
+        if len(entity_ids) < 3:
             return 0
 
+        id_to_idx = {eid: i for i, eid in enumerate(sorted(entity_ids))}
+        idx_to_id = {i: eid for eid, i in id_to_idx.items()}
+
+        edges: list[tuple[int, int]] = []
+        weights: list[int] = []
+        for r in self._conn().execute(
+            "SELECT a.entity_id AS entity_a, b.entity_id AS entity_b, weight "
+            "FROM edge_cooc "
+            "JOIN entity_int a ON edge_cooc.entity_a_int = a.int_id "
+            "JOIN entity_int b ON edge_cooc.entity_b_int = b.int_id "
+            "WHERE weight >= 2"
+        ):
+            a_idx = id_to_idx.get(r["entity_a"])
+            b_idx = id_to_idx.get(r["entity_b"])
+            if a_idx is not None and b_idx is not None:
+                edges.append((a_idx, b_idx))
+                weights.append(r["weight"])
+
+        if not edges:
+            return 0
+
+        g = ig.Graph(n=len(entity_ids), edges=edges, directed=False)
+        g.es["weight"] = weights
+
         try:
-            from networkx.algorithms.community import louvain_communities
-            communities = louvain_communities(g, seed=42)
+            communities = g.community_multilevel(weights=g.es["weight"], return_levels=False)
         except Exception:
             return 0
 
         domain_map: dict[str, str] = {}
-        for i, community in enumerate(communities):
+        for community in communities:
             members = []
-            for eid in community:
+            for idx in community:
+                eid = idx_to_id[idx]
                 node = self.get_node(eid)
                 name = node.get("name", eid.split("::")[-1]) if node else eid.split("::")[-1]
                 members.append(name)
             domain_label = ", ".join(members[:3])
-            for eid in community:
-                domain_map[eid] = domain_label
+            for idx in community:
+                domain_map[idx_to_id[idx]] = domain_label
 
         conn = self._conn()
         for eid, domain in domain_map.items():

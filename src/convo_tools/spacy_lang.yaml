@@ -1,5 +1,5 @@
 # Language-to-spaCy-model mapping for entity extraction.
 # Messages with languages not in this list are dropped during graph building.
 # Only languages with >=2% of total messages are included.
-en: en_core_web_lg
-es: es_core_news_lg
+en: en_core_web_sm
+es: es_core_news_sm

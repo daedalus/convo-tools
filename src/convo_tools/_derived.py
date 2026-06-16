@@ -153,49 +153,81 @@ def derive_entity_bridges(
     max_path_length: int = 4,
     min_betweenness: float = 0.01,
 ) -> int:
-    g = db.build_entity_cooc_graph(min_weight=2)
-    if g.number_of_nodes() < 4:
+    import igraph as ig
+
+    entity_ids = db.get_entity_id_set()
+    if len(entity_ids) < 4:
         return 0
 
+    id_to_idx = {eid: i for i, eid in enumerate(sorted(entity_ids))}
+    idx_to_id = {i: eid for eid, i in id_to_idx.items()}
+
+    edges: list[tuple[int, int]] = []
+    weights: list[int] = []
+    for r in db._conn().execute(
+        "SELECT a.entity_id AS entity_a, b.entity_id AS entity_b, weight "
+        "FROM edge_cooc "
+        "JOIN entity_int a ON edge_cooc.entity_a_int = a.int_id "
+        "JOIN entity_int b ON edge_cooc.entity_b_int = b.int_id "
+        "WHERE weight >= 2"
+    ):
+        a_idx = id_to_idx.get(r["entity_a"])
+        b_idx = id_to_idx.get(r["entity_b"])
+        if a_idx is not None and b_idx is not None:
+            edges.append((a_idx, b_idx))
+            weights.append(r["weight"])
+
+    if not edges:
+        return 0
+
+    g = ig.Graph(n=len(entity_ids), edges=edges, directed=False)
+    g.es["weight"] = weights
+
     try:
-        centrality = nx.betweenness_centrality(g, normalized=True, seed=42)
+        betweenness = g.betweenness()
     except Exception:
         return 0
 
-    bridge_entities = {
-        eid for eid, score in centrality.items() if score >= min_betweenness
+    bridge_indices = {
+        i for i, score in enumerate(betweenness) if score >= min_betweenness
     }
 
-    if not bridge_entities:
+    if not bridge_indices:
         return 0
 
     conn = db._conn()
     _init_derived_schema(conn)
     count = 0
 
-    components = list(nx.connected_components(g))
+    components = g.connected_components()
     for component in components:
         if len(component) < 3:
             continue
         sub = g.subgraph(component)
-        for eid in component:
-            if eid not in bridge_entities:
+        comp_set = set(component)
+        for v_idx in component:
+            if v_idx not in bridge_indices:
                 continue
             try:
-                lengths = nx.single_source_shortest_path_length(sub, eid, cutoff=max_path_length)
-                for target, length in lengths.items():
-                    if target != eid and length >= 2:
-                        b_a = centrality.get(eid, 0.0)
-                        b_b = centrality.get(target, 0.0)
+                target_distances = sub.shortest_paths(source=v_idx, cutoff=max_path_length)[0]
+                for t_local, length in enumerate(target_distances):
+                    if length is None or length == 0 or length > max_path_length:
+                        continue
+                    target_global = component[t_local]
+                    if target_global == v_idx:
+                        continue
+                    if length >= 2:
+                        b_a = betweenness[v_idx]
+                        b_b = betweenness[target_global]
                         bridge_score = (b_a + b_b) / 2.0
                         conn.execute(
                             "INSERT OR REPLACE INTO edge_entity_bridge "
                             "(entity_a, entity_b, path_length, betweenness) "
                             "VALUES (?, ?, ?, ?)",
-                            (eid, target, length, bridge_score),
+                            (idx_to_id[v_idx], idx_to_id[target_global], int(length), bridge_score),
                         )
                         count += 1
-            except nx.NetworkXError:
+            except Exception:
                 continue
 
     conn.commit()

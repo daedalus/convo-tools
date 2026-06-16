@@ -55,7 +55,7 @@ def _extract_entities_from_messages(
     nlp: Any,
     db: GraphDB,
     debug: bool = False,
-    batch_size: int = 64,
+    batch_size: int = 16,
 ) -> tuple[int, int]:
     from convo_tools._util import _rss_mb
 
@@ -102,6 +102,7 @@ def _extract_entities_from_messages(
                         seen_per_msg[offset].add(entity_id)
                         entity_count += 1
                         msg_entities_list.append(f"{ent.label_}:{ent.text}")
+                del doc
 
             if debug and msg_entities_list:
                 print(
@@ -127,8 +128,7 @@ def _extract_entities_from_messages(
             db.add_cooc_batch(batch_cooc)
 
         del batch_nodes, batch_mentions, batch_cooc, seen_per_msg
-        if batch_idx % 50 == 0:
-            gc.collect()
+        gc.collect()
 
     return entity_count, cooc_edges
 
@@ -281,7 +281,7 @@ def run_graph(
     limit: int = 0,
     offset: int = 0,
     only_lang: str = "all",
-    batch_size: int = 64,
+    batch_size: int = 16,
     enrich: bool = True,
 ) -> None:
     with open(pickle_path, "rb") as f:
@@ -296,6 +296,9 @@ def run_graph(
     db = GraphDB(db_path)
     processed_ids: set[str] = set()
 
+    # Extract timestamps early, then release all_messages when possible
+    timestamps = {m["id"]: m.get("create_time") for m in all_messages if m.get("create_time") is not None}
+
     processed_ids = db.get_processed_message_ids()
     if processed_ids:
         print(f"Found existing graph at {db_path}")
@@ -307,10 +310,13 @@ def run_graph(
         if unprocessed:
             print(f"  {len(unprocessed)} partially processed messages will be re-processed")
             new_unprocessed = [m for m in all_messages if m["id"] in unprocessed]
-            new_messages = list({m["id"]: m for m in new_messages + new_unprocessed}.values())
+            new_messages = list({m["id"]: m for m in new_messages + unprocessed}.values())
             print(f"  {len(new_messages)} total after including partials")
     else:
         new_messages = all_messages
+
+    del all_messages
+    gc.collect()
 
     if not new_messages:
         print("No new messages to process. Graph is up to date.")
@@ -333,12 +339,11 @@ def run_graph(
 
     # Backfill create_time for any message nodes that already existed
     # without timestamps (incremental builds from before the column existed).
-    timestamps = {m["id"]: m.get("create_time") for m in all_messages if m.get("create_time") is not None}
     if timestamps:
         db.backfill_timestamps(timestamps)
         print(f"  Backfilled timestamps for {len(timestamps)} messages")
 
-    del all_messages, new_messages
+    del new_messages, timestamps
     gc.collect()
 
     if enrich:
