@@ -775,6 +775,7 @@ def topic_clusters(
         return []
 
     cg = ig.Graph(n=len(entity_ids), edges=edges, directed=False)
+    cg.vs["name"] = sorted(entity_ids)
     cg.es["weight"] = weights
 
     entity_msgs = db.get_entity_messages()
@@ -803,7 +804,7 @@ def topic_clusters(
             if len(comm) < min_size:
                 continue
             comm_g = cg.subgraph(comm)
-            deg = dict(comm_g.degree())
+            deg = {cg.vs[idx]["name"]: comm_g.degree(i) for i, idx in enumerate(comm)}
             top = sorted(deg.items(), key=lambda x: -x[1])[:top_entities]
 
             type_counts: Counter[str] = Counter()
@@ -827,7 +828,7 @@ def topic_clusters(
                 "internal_edges": comm_g.ecount(),
                 "type_distribution": dict(type_counts.most_common(10)),
                 "top_entities": [
-                    {"name": _entity_name(db, idx_to_id[eid]), "degree": d, "entity_type": _entity_type(db, idx_to_id[eid])}
+                    {"name": _entity_name(db, eid), "degree": d, "entity_type": _entity_type(db, eid)}
                     for eid, d in top
                 ],
                 "top_keywords": [{"keyword": kw, "count": c} for kw, c in kw_counter.most_common(5)],

@@ -18,7 +18,7 @@ def graph_to_gexf(db: GraphDB, output_path: Path) -> None:
     edges_el = ET.SubElement(graph_el, "edges")
 
     node_idx: dict[str, int] = {}
-    edge_counter = 0
+    edge_counter = [0]
 
     for label in ("Message", "Entity", "Keyword", "Conversation"):
         for node in db.get_all_nodes_by_label(label):
@@ -49,10 +49,10 @@ def graph_to_gexf(db: GraphDB, output_path: Path) -> None:
     def _add_edge(src: str, dst: str, **attrs: str) -> None:
         if src in node_idx and dst in node_idx:
             edge_el = ET.SubElement(edges_el, "edge",
-                id=str(edge_counter),
+                id=str(edge_counter[0]),
                 source=str(node_idx[src]),
                 target=str(node_idx[dst]))
-            edge_counter += 1
+            edge_counter[0] += 1
             if attrs:
                 attvalues = ET.SubElement(edge_el, "attvalues")
                 for k, v in attrs.items():
@@ -64,21 +64,21 @@ def graph_to_gexf(db: GraphDB, output_path: Path) -> None:
     for src, dst in db.get_edges_replies_to():
         _add_edge(src, dst, type="REPLIES_TO")
 
-    for r in db.get_edges_mentions():
-        _add_edge(r["msg_id"], r["entity_id"], type="MENTIONS")
+    for src, dst in db.get_edges_mentions():
+        _add_edge(src, dst, type="MENTIONS")
 
-    for r in db.get_edges_cooc():
-        _add_edge(r["entity_a"], r["entity_b"], type="CO_OCCURS_WITH", weight=str(r["weight"]))
-        _add_edge(r["entity_b"], r["entity_a"], type="CO_OCCURS_WITH", weight=str(r["weight"]))
+    for src, dst, weight in db.get_edges_cooc():
+        _add_edge(src, dst, type="CO_OCCURS_WITH", weight=str(weight))
+        _add_edge(dst, src, type="CO_OCCURS_WITH", weight=str(weight))
 
-    for r in db.get_edges_keywords():
-        _add_edge(r["msg_id"], r["keyword_id"], type="HAS_KEYWORD", weight=str(r["weight"]))
+    for src, dst, weight in db.get_edges_keywords():
+        _add_edge(src, dst, type="HAS_KEYWORD", weight=str(weight))
 
     tree = ET.ElementTree(gexf)
     ET.indent(tree, space="  ")
     tree.write(str(output_path), xml_declaration=True, encoding="UTF-8")
     print(f"Wrote {output_path}")
-    print(f"  {len(node_idx)} nodes, {edge_counter} edges")
+    print(f"  {len(node_idx)} nodes, {edge_counter[0]} edges")
 
 
 def run_export(db_path: str | Path, args: argparse.Namespace) -> None:

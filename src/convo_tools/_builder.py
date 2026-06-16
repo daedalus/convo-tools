@@ -23,6 +23,7 @@ def _load_lang_config() -> dict[str, str]:
 
 _active_nlp: Any = None
 _active_model_name: str | None = None
+_LANG_MODELS: dict[str, Any] = {}
 
 
 def _ensure_model(model_name: str) -> Any:

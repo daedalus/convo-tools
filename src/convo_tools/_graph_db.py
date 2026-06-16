@@ -353,23 +353,23 @@ class GraphDB:
         ).fetchall()
         return [(r["parent_id"], r["child_id"]) for r in rows]
 
-    def get_edges_mentions(self):
-        return self._conn().execute(
+    def get_edges_mentions(self) -> list[tuple[str, str]]:
+        return [(r["msg_id"], r["entity_id"]) for r in self._conn().execute(
             "SELECT msg_id, entity_id FROM edge_mentions"
-        )
+        )]
 
-    def get_edges_cooc(self):
-        return self._conn().execute(
+    def get_edges_cooc(self) -> list[tuple[str, str, int]]:
+        return [(r["entity_a"], r["entity_b"], r["weight"]) for r in self._conn().execute(
             "SELECT a.entity_id AS entity_a, b.entity_id AS entity_b, weight "
             "FROM edge_cooc "
             "JOIN entity_int a ON edge_cooc.entity_a_int = a.int_id "
             "JOIN entity_int b ON edge_cooc.entity_b_int = b.int_id"
-        )
+        )]
 
-    def get_edges_keywords(self):
-        return self._conn().execute(
+    def get_edges_keywords(self) -> list[tuple[str, str, float]]:
+        return [(r["msg_id"], r["keyword_id"], r["weight"]) for r in self._conn().execute(
             "SELECT msg_id, keyword_id, weight FROM edge_keyword"
-        )
+        )]
 
     def count_edges(self) -> dict[str, int]:
         return {
