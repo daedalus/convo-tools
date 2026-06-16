@@ -10,6 +10,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 from convo_tools._graph_db import GraphDB
+from convo_tools._util import _progressbar
 
 DERIVED_SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS edge_conversation_topic (
@@ -162,6 +163,7 @@ def derive_entity_bridges(
     id_to_idx = {eid: i for i, eid in enumerate(sorted(entity_ids))}
     idx_to_id = {i: eid for eid, i in id_to_idx.items()}
 
+    print("  Loading co-occurrence edges...", end="", flush=True)
     edges: list[tuple[int, int]] = []
     weights: list[int] = []
     for r in db._conn().execute(
@@ -176,6 +178,7 @@ def derive_entity_bridges(
         if a_idx is not None and b_idx is not None:
             edges.append((a_idx, b_idx))
             weights.append(r["weight"])
+    print(f" {len(edges)} edges")
 
     if not edges:
         return 0
@@ -183,10 +186,13 @@ def derive_entity_bridges(
     g = ig.Graph(n=len(entity_ids), edges=edges, directed=False)
     g.es["weight"] = weights
 
+    print("  Computing betweenness centrality...", end="", flush=True)
     try:
         betweenness = g.betweenness()
     except Exception:
+        print(" failed")
         return 0
+    print(" done")
 
     bridge_indices = {
         i for i, score in enumerate(betweenness) if score >= min_betweenness
@@ -200,13 +206,23 @@ def derive_entity_bridges(
     count = 0
 
     components = g.connected_components()
-    for component in components:
-        if len(component) < 3:
-            continue
+    large_components = [c for c in components if len(c) >= 3]
+    bridge_entities_in_large = [
+        v for comp in large_components for v in comp if v in bridge_indices
+    ]
+    total = len(bridge_entities_in_large)
+    processed = 0
+
+    for component in large_components:
         sub = g.subgraph(component)
-        comp_set = set(component)
         for v_idx in component:
             if v_idx not in bridge_indices:
+                continue
+            processed += 1
+            if total > 0:
+                bar_filled = int(40 * processed / total)
+                bar = "#" * bar_filled + "." * (40 - bar_filled)
+                print(f"\r  bridges [{'#' * bar_filled}{'.' * (40 - bar_filled)}] {processed}/{total}", end="", flush=True)
                 continue
             try:
                 target_distances = sub.shortest_paths(source=v_idx, cutoff=max_path_length)[0]
@@ -229,6 +245,9 @@ def derive_entity_bridges(
                         count += 1
             except Exception:
                 continue
+
+    if total > 0:
+        print()
 
     conn.commit()
     return count
