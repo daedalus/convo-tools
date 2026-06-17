@@ -103,11 +103,16 @@ def compute_spectral_embeddings(
 
 def _prune_graph(g, max_edges_per_node: int = 100) -> None:
     """KNN prune: keep only the strongest edges per node."""
-    if not max_edges_per_node or g.ecount() <= max_edges_per_node * g.vcount():
+    if not max_edges_per_node:
         print(f"  Graph: {g.vcount()} nodes, {g.ecount()} edges")
         return
 
-    print(f"  Pruning to {max_edges_per_node} edges/node...")
+    avg_degree = g.ecount() * 2 / g.vcount() if g.vcount() else 0
+    if avg_degree <= max_edges_per_node:
+        print(f"  Graph: {g.vcount()} nodes, {g.ecount()} edges (avg degree {avg_degree:.0f})")
+        return
+
+    print(f"  Pruning from avg degree {avg_degree:.0f} to {max_edges_per_node}...")
     edges_to_remove = []
     for v in g.vs:
         nbs = g.neighbors(v.index)
@@ -117,7 +122,7 @@ def _prune_graph(g, max_edges_per_node: int = 100) -> None:
             for nb, _ in edge_weights[max_edges_per_node:]:
                 edges_to_remove.append(g.get_eid(v.index, nb))
     g.delete_edges(edges_to_remove)
-    print(f"  Pruned to {g.vcount()} nodes, {g.ecount()} edges")
+    print(f"  Pruned to {g.vcount()} nodes, {g.ecount()} edges (avg degree {g.ecount() * 2 / g.vcount():.0f})")
 
 
 def compute_node2vec_embeddings(
