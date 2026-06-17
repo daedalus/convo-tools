@@ -101,6 +101,25 @@ def compute_spectral_embeddings(
     return embeddings
 
 
+def _prune_graph(g, max_edges_per_node: int = 100) -> None:
+    """KNN prune: keep only the strongest edges per node."""
+    if not max_edges_per_node or g.ecount() <= max_edges_per_node * g.vcount():
+        print(f"  Graph: {g.vcount()} nodes, {g.ecount()} edges")
+        return
+
+    print(f"  Pruning to {max_edges_per_node} edges/node...")
+    edges_to_remove = []
+    for v in g.vs:
+        nbs = g.neighbors(v.index)
+        if len(nbs) > max_edges_per_node:
+            edge_weights = [(nb, g[v.index, nb]) for nb in nbs]
+            edge_weights.sort(key=lambda x: -x[1])
+            for nb, _ in edge_weights[max_edges_per_node:]:
+                edges_to_remove.append(g.get_eid(v.index, nb))
+    g.delete_edges(edges_to_remove)
+    print(f"  Pruned to {g.vcount()} nodes, {g.ecount()} edges")
+
+
 def compute_node2vec_embeddings(
     db: GraphDB,
     dim: int = 32,
@@ -144,20 +163,7 @@ def compute_node2vec_embeddings(
     del edge_pairs
     g.simplify(multiple=True, loops=True)
 
-    if max_edges_per_node and g.ecount() > max_edges_per_node * g.vcount():
-        print(f"  Pruning to {max_edges_per_node} edges/node...")
-        edges_to_remove = []
-        for v in g.vs:
-            nbs = g.neighbors(v.index)
-            if len(nbs) > max_edges_per_node:
-                edge_weights = [(nb, g[v.index, nb]) for nb in nbs]
-                edge_weights.sort(key=lambda x: -x[1])
-                for nb, _ in edge_weights[max_edges_per_node:]:
-                    edges_to_remove.append(g.get_eid(v.index, nb))
-        g.delete_edges(edges_to_remove)
-        print(f"  Pruned to {g.vcount()} nodes, {g.ecount()} edges")
-    else:
-        print(f"  Graph: {g.vcount()} nodes, {g.ecount()} edges")
+    _prune_graph(g, max_edges_per_node)
 
     import random
     random.seed(42)
