@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import pickle
+import re
 import zipfile
 from typing import TYPE_CHECKING, Any
 
@@ -11,6 +12,26 @@ from convo_tools._util import text_hash
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+
+_BASE64_RE = re.compile(r"^[A-Za-z0-9+/=\s]+$")
+
+
+def _is_base64(s: str) -> bool:
+    """Return True if string looks like base64-encoded data."""
+    s = s.strip()
+    if not s:
+        return False
+    if s.startswith("data:"):
+        return True
+    if len(s) < 100:
+        return False
+    return bool(_BASE64_RE.match(s))
+
+
+def _clean_parts(parts: list[str]) -> list[str]:
+    """Filter out base64 blobs from message parts."""
+    return [p for p in parts if not _is_base64(p)]
 
 
 def detect_lang(text: str) -> str:
@@ -35,7 +56,7 @@ def extract_messages(conversation: dict[str, Any]) -> list[dict[str, Any]]:
         if content.get("content_type") != "text":
             continue
 
-        text = "\n".join(content.get("parts", []))
+        text = "\n".join(_clean_parts(content.get("parts", [])))
         create_time = message.get("create_time")
         messages.append(
             {
