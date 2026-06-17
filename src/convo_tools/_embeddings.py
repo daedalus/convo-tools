@@ -108,6 +108,8 @@ def compute_node2vec_embeddings(
     num_walks: int = 10,
     p: float = 1.0,
     q: float = 1.0,
+    min_edge_weight: int = 2,
+    max_edges_per_node: int = 100,
     include_keywords: bool = False,
 ) -> dict[str, np.ndarray]:
     id_to_idx: dict[str, int] = {}
@@ -122,10 +124,11 @@ def compute_node2vec_embeddings(
         edge_pairs.append((_get_idx(src), _get_idx(dst)))
 
     for r in db._conn().execute(
-        "SELECT a.entity_id AS entity_a, b.entity_id AS entity_b "
+        "SELECT a.entity_id AS entity_a, b.entity_id AS entity_b, weight "
         "FROM edge_cooc "
         "JOIN entity_int a ON edge_cooc.entity_a_int = a.int_id "
-        "JOIN entity_int b ON edge_cooc.entity_b_int = b.int_id"
+        "JOIN entity_int b ON edge_cooc.entity_b_int = b.int_id "
+        f"WHERE weight >= {min_edge_weight}"
     ):
         edge_pairs.append((_get_idx(r["entity_a"]), _get_idx(r["entity_b"])))
 
@@ -140,7 +143,21 @@ def compute_node2vec_embeddings(
     g = ig.Graph(n=n_nodes, edges=edge_pairs, directed=False)
     del edge_pairs
     g.simplify(multiple=True, loops=True)
-    print(f"  Graph: {g.vcount()} nodes, {g.ecount()} edges")
+
+    if max_edges_per_node and g.ecount() > max_edges_per_node * g.vcount():
+        print(f"  Pruning to {max_edges_per_node} edges/node...")
+        edges_to_remove = []
+        for v in g.vs:
+            nbs = g.neighbors(v.index)
+            if len(nbs) > max_edges_per_node:
+                edge_weights = [(nb, g[v.index, nb]) for nb in nbs]
+                edge_weights.sort(key=lambda x: -x[1])
+                for nb, _ in edge_weights[max_edges_per_node:]:
+                    edges_to_remove.append(g.get_eid(v.index, nb))
+        g.delete_edges(edges_to_remove)
+        print(f"  Pruned to {g.vcount()} nodes, {g.ecount()} edges")
+    else:
+        print(f"  Graph: {g.vcount()} nodes, {g.ecount()} edges")
 
     import random
     random.seed(42)
