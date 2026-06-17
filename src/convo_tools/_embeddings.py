@@ -186,6 +186,9 @@ def compute_node2vec_embeddings(
     walk_count = 0
     BATCH = 50000
 
+    import time as _time
+    _t0 = _time.monotonic()
+
     node_indices = list(range(n_nodes))
     for _ in range(num_walks):
         random.shuffle(node_indices)
@@ -230,7 +233,16 @@ def compute_node2vec_embeddings(
                 del batch_rows, batch_cols, data
                 batch_rows = _array.array("l")
                 batch_cols = _array.array("l")
-                print(f"\r  walks {walk_count}/{total_walks}  ", end="", flush=True)
+                elapsed = _time.monotonic() - _t0
+                rate = walk_count / elapsed if elapsed > 0 else 0
+                eta = (total_walks - walk_count) / rate if rate > 0 else 0
+                if eta >= 3600:
+                    eta_str = f"{eta / 3600:.1f}h"
+                elif eta >= 60:
+                    eta_str = f"{eta / 60:.1f}m"
+                else:
+                    eta_str = f"{eta:.0f}s"
+                print(f"\r  walks {walk_count}/{total_walks}  {rate:.0f}/s  ETA {eta_str}  ", end="", flush=True)
 
         if batch_rows:
             data = np.ones(len(batch_rows), dtype=np.float32)
