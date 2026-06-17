@@ -181,15 +181,32 @@ def derive_entity_bridges(
     g = ig.Graph(n=len(entity_ids), edges=edges, directed=False)
     g.es["weight"] = weights
 
+    components = g.connected_components()
+    large_components = sorted([c for c in components if len(c) >= 3], key=len, reverse=True)
+
     import time as _time
-    print("  Computing betweenness centrality...", end="", flush=True)
-    _t0 = _time.monotonic()
-    try:
-        betweenness = g.betweenness()
-    except Exception:
-        print(" failed")
-        return 0
-    print(f" {_time.monotonic() - _t0:.1f}s")
+    betweenness: list[float] = [0.0] * g.vcount()
+    total_nodes = sum(len(c) for c in large_components)
+    processed = 0
+
+    for comp_idx, comp in enumerate(large_components):
+        n = len(comp)
+        bar = int(40 * processed / total_nodes) if total_nodes else 0
+        print(f"\r  betweenness [{'#' * bar}{'.' * (40 - bar)}] {processed}/{total_nodes} nodes  ", end="", flush=True)
+
+        sg = g.subgraph(comp)
+        try:
+            sg_betweenness = sg.betweenness()
+        except Exception:
+            processed += n
+            continue
+
+        for i, v_idx in enumerate(comp):
+            betweenness[v_idx] = sg_betweenness[i]
+        processed += n
+
+    bar = int(40 * processed / total_nodes) if total_nodes else 0
+    print(f"\r  betweenness [{'#' * bar}{'.' * (40 - bar)}] {processed}/{total_nodes} nodes  ")
 
     bridge_indices = {
         i for i, score in enumerate(betweenness) if score >= min_betweenness
@@ -202,8 +219,6 @@ def derive_entity_bridges(
     _init_derived_schema(conn)
     count = 0
 
-    components = g.connected_components()
-    large_components = [c for c in components if len(c) >= 3]
     bridge_entities_in_large = [
         v for comp in large_components for v in comp if v in bridge_indices
     ]
