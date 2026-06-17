@@ -123,10 +123,14 @@ def compute_node2vec_embeddings(
         edges.append((_get_idx(src), _get_idx(dst)))
         weights.append(1.0)
 
-    for r in db.get_edges_cooc():
-        src, dst, weight = r["entity_a"], r["entity_b"], r["weight"]
-        edges.append((_get_idx(src), _get_idx(dst)))
-        weights.append(float(weight))
+    for r in db._conn().execute(
+        "SELECT a.entity_id AS entity_a, b.entity_id AS entity_b, weight "
+        "FROM edge_cooc "
+        "JOIN entity_int a ON edge_cooc.entity_a_int = a.int_id "
+        "JOIN entity_int b ON edge_cooc.entity_b_int = b.int_id"
+    ):
+        edges.append((_get_idx(r["entity_a"]), _get_idx(r["entity_b"])))
+        weights.append(float(r["weight"]))
 
     if include_keywords:
         for r in db.get_edges_keywords():
