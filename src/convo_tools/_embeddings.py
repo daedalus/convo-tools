@@ -147,8 +147,9 @@ def compute_node2vec_embeddings(
 
     idx_to_id = {i: name for name, i in id_to_idx.items()}
 
-    from scipy.sparse import lil_matrix
-    cooc = lil_matrix((n_nodes, n_nodes), dtype=np.float32)
+    import array as _array
+    cooc_rows = _array.array("l")
+    cooc_cols = _array.array("l")
     window = 5
 
     total_walks = num_walks * n_nodes
@@ -185,7 +186,8 @@ def compute_node2vec_embeddings(
             for i, node in enumerate(walk):
                 for j in range(max(0, i - window), min(len(walk), i + window + 1)):
                     if i != j:
-                        cooc[node, walk[j]] += 1.0
+                        cooc_rows.append(node)
+                        cooc_cols.append(walk[j])
 
             walk_count += 1
             if walk_count % 10000 == 0:
@@ -193,6 +195,12 @@ def compute_node2vec_embeddings(
 
     print(f"\r  {walk_count} walks completed              ")
 
+    from scipy.sparse import coo_matrix
+    import numpy as np
+
+    data = np.ones(len(cooc_rows), dtype=np.float32)
+    cooc = coo_matrix((data, (list(cooc_rows), list(cooc_cols))), shape=(n_nodes, n_nodes))
+    del cooc_rows, cooc_cols, data
     cooc_csr = cooc.tocsr()
     del cooc
     gc.collect()
