@@ -146,7 +146,14 @@ def compute_node2vec_embeddings(
     random.seed(42)
 
     idx_to_id = {i: name for name, i in id_to_idx.items()}
-    walks: list[list[str]] = []
+
+    from scipy.sparse import lil_matrix
+    cooc = lil_matrix((n_nodes, n_nodes), dtype=np.float32)
+    window = 5
+
+    total_walks = num_walks * n_nodes
+    walk_count = 0
+
     node_indices = list(range(n_nodes))
     for _ in range(num_walks):
         random.shuffle(node_indices)
@@ -159,11 +166,12 @@ def compute_node2vec_embeddings(
                     break
                 if len(walk) >= 2:
                     prev = walk[-2]
+                    prev_nbs = set(g.neighbors(prev))
                     biased_nbs = []
                     for nb in nbs:
                         if nb == prev:
                             biased_nbs.extend([nb] * int(1.0 / p))
-                        elif nb in g.neighbors(prev):
+                        elif nb in prev_nbs:
                             biased_nbs.extend([nb] * int(1.0 / q))
                         else:
                             biased_nbs.append(nb)
@@ -173,26 +181,17 @@ def compute_node2vec_embeddings(
                         walk.append(random.choice(nbs))
                 else:
                     walk.append(random.choice(nbs))
-            walks.append([idx_to_id[i] for i in walk])
 
-    print(f"  {len(walks)} walks completed")
+            for i, node in enumerate(walk):
+                for j in range(max(0, i - window), min(len(walk), i + window + 1)):
+                    if i != j:
+                        cooc[node, walk[j]] += 1.0
 
-    vocab = id_to_idx
-    n_nodes = len(vocab)
+            walk_count += 1
+            if walk_count % 10000 == 0:
+                print(f"\r  walks {walk_count}/{total_walks}  ", end="", flush=True)
 
-    from scipy.sparse import lil_matrix
-
-    cooc = lil_matrix((n_nodes, n_nodes), dtype=np.float32)
-    window = 5
-    for walk in walks:
-        for i, node in enumerate(walk):
-            vi = vocab[node]
-            for j in range(max(0, i - window), min(len(walk), i + window + 1)):
-                if i != j:
-                    cooc[vi, vocab[walk[j]]] += 1.0
-
-    del walks
-    gc.collect()
+    print(f"\r  {walk_count} walks completed              ")
 
     cooc_csr = cooc.tocsr()
     del cooc
