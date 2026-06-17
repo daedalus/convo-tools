@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import pickle
 import re
@@ -18,7 +19,7 @@ _BASE64_RE = re.compile(r"^[A-Za-z0-9+/=\s]+$")
 
 
 def _is_base64(s: str) -> bool:
-    """Return True if string looks like base64-encoded data."""
+    """Return True if string is valid base64-encoded data."""
     s = s.strip()
     if not s:
         return False
@@ -26,7 +27,13 @@ def _is_base64(s: str) -> bool:
         return True
     if len(s) < 100:
         return False
-    return bool(_BASE64_RE.match(s))
+    if not _BASE64_RE.match(s):
+        return False
+    try:
+        base64.b64decode(s, validate=True)
+        return True
+    except Exception:
+        return False
 
 
 def _clean_parts(parts: list[str]) -> list[str]:
