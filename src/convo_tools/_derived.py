@@ -196,7 +196,8 @@ def derive_entity_bridges(
 
         sg = g.subgraph(comp)
         try:
-            sg_betweenness = sg.betweenness()
+            cutoff = 10 if n > 5000 else None
+            sg_betweenness = sg.betweenness(cutoff=cutoff)
         except Exception:
             processed += n
             continue
