@@ -111,8 +111,7 @@ def compute_node2vec_embeddings(
     include_keywords: bool = False,
 ) -> dict[str, np.ndarray]:
     id_to_idx: dict[str, int] = {}
-    edges: list[tuple[int, int]] = []
-    weights: list[float] = []
+    edge_pairs: list[tuple[int, int]] = []
 
     def _get_idx(name: str) -> int:
         if name not in id_to_idx:
@@ -120,45 +119,34 @@ def compute_node2vec_embeddings(
         return id_to_idx[name]
 
     for src, dst in db.get_edges_mentions():
-        edges.append((_get_idx(src), _get_idx(dst)))
-        weights.append(1.0)
+        edge_pairs.append((_get_idx(src), _get_idx(dst)))
 
     for r in db._conn().execute(
-        "SELECT a.entity_id AS entity_a, b.entity_id AS entity_b, weight "
+        "SELECT a.entity_id AS entity_a, b.entity_id AS entity_b "
         "FROM edge_cooc "
         "JOIN entity_int a ON edge_cooc.entity_a_int = a.int_id "
         "JOIN entity_int b ON edge_cooc.entity_b_int = b.int_id"
     ):
-        edges.append((_get_idx(r["entity_a"]), _get_idx(r["entity_b"])))
-        weights.append(float(r["weight"]))
+        edge_pairs.append((_get_idx(r["entity_a"]), _get_idx(r["entity_b"])))
 
     if include_keywords:
-        for r in db.get_edges_keywords():
-            src, dst, weight = r["msg_id"], r["keyword_id"], r["weight"]
-            edges.append((_get_idx(src), _get_idx(dst)))
-            weights.append(weight)
+        for src, dst, _w in db.get_edges_keywords():
+            edge_pairs.append((_get_idx(src), _get_idx(dst)))
 
     n_nodes = len(id_to_idx)
     if n_nodes < 3:
         return {}
 
-    g = ig.Graph(n=n_nodes, edges=edges, directed=False)
-    g.simplify(multiple=True, loops=True, combine_edges="sum")
-
+    g = ig.Graph(n=n_nodes, edges=edge_pairs, directed=False)
+    del edge_pairs
+    g.simplify(multiple=True, loops=True)
     print(f"  Graph: {g.vcount()} nodes, {g.ecount()} edges")
-
-    from collections import defaultdict
-
-    neighbors: dict[int, list[int]] = defaultdict(list)
-    for e in g.es:
-        neighbors[e.source].append(e.target)
-        neighbors[e.target].append(e.source)
 
     import random
     random.seed(42)
 
-    walks: list[list[str]] = []
     idx_to_id = {i: name for name, i in id_to_idx.items()}
+    walks: list[list[str]] = []
     node_indices = list(range(n_nodes))
     for _ in range(num_walks):
         random.shuffle(node_indices)
@@ -166,7 +154,7 @@ def compute_node2vec_embeddings(
             walk = [node]
             for _ in range(walk_length - 1):
                 current = walk[-1]
-                nbs = neighbors.get(current, [])
+                nbs = g.neighbors(current)
                 if not nbs:
                     break
                 if len(walk) >= 2:
@@ -175,7 +163,7 @@ def compute_node2vec_embeddings(
                     for nb in nbs:
                         if nb == prev:
                             biased_nbs.extend([nb] * int(1.0 / p))
-                        elif nb in neighbors.get(prev, []):
+                        elif nb in g.neighbors(prev):
                             biased_nbs.extend([nb] * int(1.0 / q))
                         else:
                             biased_nbs.append(nb)
