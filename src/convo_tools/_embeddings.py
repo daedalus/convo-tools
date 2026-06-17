@@ -176,16 +176,22 @@ def compute_node2vec_embeddings(
     idx_to_id = {i: name for name, i in id_to_idx.items()}
 
     import array as _array
-    cooc_rows = _array.array("l")
-    cooc_cols = _array.array("l")
+    from scipy.sparse import coo_matrix, csr_matrix
+    import numpy as np
+
+    cooc = csr_matrix((n_nodes, n_nodes), dtype=np.float32)
     window = 5
 
     total_walks = num_walks * n_nodes
     walk_count = 0
+    BATCH = 50000
 
     node_indices = list(range(n_nodes))
     for _ in range(num_walks):
         random.shuffle(node_indices)
+        batch_rows = _array.array("l")
+        batch_cols = _array.array("l")
+
         for node in node_indices:
             walk = [node]
             for _ in range(walk_length - 1):
@@ -214,22 +220,26 @@ def compute_node2vec_embeddings(
             for i, node in enumerate(walk):
                 for j in range(max(0, i - window), min(len(walk), i + window + 1)):
                     if i != j:
-                        cooc_rows.append(node)
-                        cooc_cols.append(walk[j])
+                        batch_rows.append(node)
+                        batch_cols.append(walk[j])
 
             walk_count += 1
-            if walk_count % 10000 == 0:
+            if walk_count % BATCH == 0:
+                data = np.ones(len(batch_rows), dtype=np.float32)
+                cooc = cooc + coo_matrix((data, (list(batch_rows), list(batch_cols))), shape=(n_nodes, n_nodes)).tocsr()
+                del batch_rows, batch_cols, data
+                batch_rows = _array.array("l")
+                batch_cols = _array.array("l")
                 print(f"\r  walks {walk_count}/{total_walks}  ", end="", flush=True)
+
+        if batch_rows:
+            data = np.ones(len(batch_rows), dtype=np.float32)
+            cooc = cooc + coo_matrix((data, (list(batch_rows), list(batch_cols))), shape=(n_nodes, n_nodes)).tocsr()
+            del batch_rows, batch_cols, data
 
     print(f"\r  {walk_count} walks completed              ")
 
-    from scipy.sparse import coo_matrix
-    import numpy as np
-
-    data = np.ones(len(cooc_rows), dtype=np.float32)
-    cooc = coo_matrix((data, (list(cooc_rows), list(cooc_cols))), shape=(n_nodes, n_nodes))
-    del cooc_rows, cooc_cols, data
-    cooc_csr = cooc.tocsr()
+    cooc_csr = cooc
     del cooc
     gc.collect()
 
