@@ -195,19 +195,22 @@ def derive_entity_bridges(
         print(f"\r  betweenness [{'#' * bar}{'.' * (40 - bar)}] {processed}/{total_nodes} nodes  ", end="", flush=True)
 
         sg = g.subgraph(comp)
+        _t0 = _time.monotonic()
         try:
-            cutoff = 10 if n > 5000 else None
+            cutoff = 4
             sg_betweenness = sg.betweenness(cutoff=cutoff)
         except Exception:
             processed += n
             continue
+        elapsed = _time.monotonic() - _t0
+        rate = n / elapsed if elapsed > 0 else 0
+        print(f"\r  betweenness [{'#' * (int(40 * (processed + n) / total_nodes) if total_nodes else 0)}{'.' * (40 - int(40 * (processed + n) / total_nodes) if total_nodes else 0)}] {processed + n}/{total_nodes} nodes  ({rate:.0f} n/s)  ", end="", flush=True)
 
         for i, v_idx in enumerate(comp):
             betweenness[v_idx] = sg_betweenness[i]
         processed += n
 
-    bar = int(40 * processed / total_nodes) if total_nodes else 0
-    print(f"\r  betweenness [{'#' * bar}{'.' * (40 - bar)}] {processed}/{total_nodes} nodes  ")
+    print(f"\r  betweenness [{'#' * 40}] {processed}/{total_nodes} nodes                    ")
 
     bridge_indices = {
         i for i, score in enumerate(betweenness) if score >= min_betweenness
