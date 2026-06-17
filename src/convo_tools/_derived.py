@@ -188,23 +188,30 @@ def derive_entity_bridges(
     betweenness: list[float] = [0.0] * g.vcount()
     total_nodes = sum(len(c) for c in large_components)
     processed = 0
+    MAX_COMP_SIZE = 5000
 
     for comp_idx, comp in enumerate(large_components):
         n = len(comp)
         bar = int(40 * processed / total_nodes) if total_nodes else 0
+
+        if n > MAX_COMP_SIZE:
+            print(f"\r  betweenness [{'#' * bar}{'.' * (40 - bar)}] {processed}/{total_nodes} nodes  (skipping component of {n} nodes)  ", end="", flush=True)
+            processed += n
+            continue
+
         print(f"\r  betweenness [{'#' * bar}{'.' * (40 - bar)}] {processed}/{total_nodes} nodes  ", end="", flush=True)
 
         sg = g.subgraph(comp)
         _t0 = _time.monotonic()
         try:
-            cutoff = 4
-            sg_betweenness = sg.betweenness(cutoff=cutoff)
+            sg_betweenness = sg.betweenness()
         except Exception:
             processed += n
             continue
         elapsed = _time.monotonic() - _t0
         rate = n / elapsed if elapsed > 0 else 0
-        print(f"\r  betweenness [{'#' * (int(40 * (processed + n) / total_nodes) if total_nodes else 0)}{'.' * (40 - int(40 * (processed + n) / total_nodes) if total_nodes else 0)}] {processed + n}/{total_nodes} nodes  ({rate:.0f} n/s)  ", end="", flush=True)
+        new_bar = int(40 * (processed + n) / total_nodes) if total_nodes else 0
+        print(f"\r  betweenness [{'#' * new_bar}{'.' * (40 - new_bar)}] {processed + n}/{total_nodes} nodes  ({rate:.0f} n/s)  ", end="", flush=True)
 
         for i, v_idx in enumerate(comp):
             betweenness[v_idx] = sg_betweenness[i]
