@@ -29,11 +29,13 @@ def semantic_search(
     msg_keywords = db.get_message_keywords()
     entity_msgs = db.get_entity_messages()
     keyword_msgs: dict[str, set[str]] = defaultdict(set)
-    for mid, kid, _ in msg_keywords.get_edge_keywords():
-        keyword_msgs[kid].add(mid)
+    for mid, kws in msg_keywords.items():
+        for kid in kws:
+            keyword_msgs[kid].add(mid)
 
     entity_scores: dict[str, float] = {}
-    for eid in msg_entities.values():
+    all_entity_ids = {eid for eids in msg_entities.values() for eid in eids}
+    for eid in all_entity_ids:
         node = db.get_node(eid)
         if not node:
             continue
