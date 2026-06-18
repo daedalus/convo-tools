@@ -12,6 +12,7 @@ if TYPE_CHECKING:
     from typing import Any
 
 from convo_tools._graph_db import GraphDB
+from convo_tools._util import safe_pickle_load
 
 
 def _conv_title(conv_id: str, msgs_by_conv: dict[str, list[dict[str, Any]]]) -> str:
@@ -32,8 +33,7 @@ def run_similarity(db_path: str | Path, args: argparse.Namespace) -> None:
     edges_mentions = db.get_edges_mentions()
     edges_keywords = db.get_edges_keywords()
 
-    with open(args.messages, "rb") as f:
-        messages: list[dict[str, Any]] = pickle.load(f)
+    messages: list[dict[str, Any]] = safe_pickle_load(args.messages)
 
     msg_entities: dict[str, set[str]] = defaultdict(set)
     for msg_id, entity_id in edges_mentions:

@@ -11,6 +11,7 @@ if TYPE_CHECKING:
     import argparse
 
 from convo_tools._graph_db import GraphDB
+from convo_tools._util import safe_pickle_load
 
 
 def _time_bucket(ts: float | None, freq: str) -> str:
@@ -29,9 +30,7 @@ def _time_bucket(ts: float | None, freq: str) -> str:
 def run_timeline(db_path: str | Path, args: argparse.Namespace) -> None:
     db = GraphDB(db_path)
 
-    with open(args.messages, "rb") as f:
-        import pickle
-        messages: list[dict[str, Any]] = pickle.load(f)
+    messages: list[dict[str, Any]] = safe_pickle_load(args.messages)
 
     msg_timestamps: dict[str, float | None] = {}
     for m in messages:

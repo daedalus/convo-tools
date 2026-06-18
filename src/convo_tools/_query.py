@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import csv
 import os
+import pickle
 import re
 import sys
 from collections import defaultdict
 from pathlib import Path
 from typing import TYPE_CHECKING
+
+from convo_tools._util import safe_pickle_load
 
 if TYPE_CHECKING:
     import argparse
@@ -312,8 +315,7 @@ def run_query(db_path: str | Path, args: argparse.Namespace) -> None:
 
         messages_pkl: list[dict[str, Any]] | None = None
         try:
-            with open(args.messages, "rb") as f:
-                messages_pkl = pickle.load(f)
+            messages_pkl = safe_pickle_load(args.messages)
         except (FileNotFoundError, pickle.UnpicklingError):
             pass
 

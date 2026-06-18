@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from convo_tools._graph_db import GraphDB
-from convo_tools._util import _progressbar, _rss_mb
+from convo_tools._util import _progressbar, _rss_mb, safe_pickle_load
 
 TOP_KEYWORDS_PER_MESSAGE = 5
 
@@ -285,8 +285,7 @@ def run_graph(
     batch_size: int = 16,
     enrich: bool = True,
 ) -> None:
-    with open(pickle_path, "rb") as f:
-        all_messages: list[dict[str, Any]] = pickle.load(f)
+    all_messages: list[dict[str, Any]] = safe_pickle_load(pickle_path)
 
     print(f"Loaded {len(all_messages)} messages from {pickle_path}")
     print(f"  RSS: {_rss_mb():.0f} MB")

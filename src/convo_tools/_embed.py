@@ -5,6 +5,8 @@ import pickle
 import sys
 from typing import TYPE_CHECKING
 
+from convo_tools._util import safe_pickle_load
+
 if TYPE_CHECKING:
     import argparse
     from typing import Any
@@ -33,8 +35,7 @@ def _msg_role(nodes: dict[str, Any], msg_id: str) -> str:
 
 
 def _load_graph(pickle_path: str) -> dict[str, Any] | None:
-    with open(pickle_path, "rb") as f:
-        graph = pickle.load(f)
+    graph = safe_pickle_load(pickle_path)
     if not isinstance(graph, dict) or "nodes" not in graph:
         print("Error: graph pickle missing 'nodes' key", file=sys.stderr)
         return None

@@ -1,12 +1,37 @@
 from __future__ import annotations
 
 import hashlib
+import io
+import pickle
 import sys
 import time
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator
+    from pathlib import Path
+
+
+class _SafeUnpickler(pickle.Unpickler):
+    """Restrict unpickling to safe built-in types only."""
+
+    _SAFE = frozenset({"bool", "int", "float", "complex", "str", "bytes",
+                        "bytearray", "list", "tuple", "set", "frozenset",
+                        "dict", "NoneType"})
+
+    def find_class(self, module: str, name: str) -> Any:
+        if module == "builtins" and name in self._SAFE:
+            return getattr(__builtins__ if isinstance(__builtins__, dict) else __builtins__, name)
+        raise pickle.UnpicklingError(f"Disallowed: {module}.{name}")
+
+
+def safe_pickle_load(path: str | Path) -> Any:
+    """Load a pickle file with restricted unpickling (blocks arbitrary code execution)."""
+    with open(path, "rb") as f:
+        data = f.read()
+
+    buf = io.BytesIO(data)
+    return _SafeUnpickler(buf).load()
 
 
 def _progressbar(iterable: Iterable[Any], total: int, prefix: str = "", width: int = 40) -> Iterator[Any]:

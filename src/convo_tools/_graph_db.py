@@ -7,6 +7,8 @@ import threading
 from collections import Counter, defaultdict
 from typing import TYPE_CHECKING, Any
 
+from convo_tools._util import safe_pickle_load
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -722,8 +724,7 @@ class GraphDB:
     def from_pickle(
         cls, pickle_path: str | Path, db_path: str | Path
     ) -> GraphDB:
-        with open(pickle_path, "rb") as f:
-            data = pickle.load(f)
+        data = safe_pickle_load(pickle_path)
         db = cls(db_path)
         db.add_graph_batch(data)
         db._conn().commit()

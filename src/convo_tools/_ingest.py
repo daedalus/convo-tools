@@ -9,6 +9,7 @@ if TYPE_CHECKING:
     from typing import Any
 
 from convo_tools._graph_db import GraphDB
+from convo_tools._util import safe_pickle_load
 
 KUZU_SCHEMA_SQL = """
 CREATE NODE TABLE IF NOT EXISTS Conversation (
@@ -161,9 +162,7 @@ def graph_to_kuzu(graph_data: dict[str, Any], db_path: str, overwrite: bool = Fa
 
 def run_ingest(args: argparse.Namespace) -> None:
     if args.pickle_path:
-        import pickle
-        with open(args.pickle_path, "rb") as f:
-            graph_data = pickle.load(f)
+        graph_data = safe_pickle_load(args.pickle_path)
     else:
         db = GraphDB(args.db)
         graph_data = db.to_pickle()

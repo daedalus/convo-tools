@@ -6,6 +6,8 @@ import sys
 from collections import Counter
 from typing import TYPE_CHECKING
 
+from convo_tools._util import safe_pickle_load
+
 if TYPE_CHECKING:
     import argparse
     from typing import Any
@@ -204,8 +206,7 @@ def _entity_type_breakdown(
 
 def _load(path: str, side: str) -> dict[str, Any] | None:
     try:
-        with open(path, "rb") as f:
-            data = pickle.load(f)
+        data = safe_pickle_load(path)
     except FileNotFoundError:
         print(f"Error: {side} pickle not found: {path}", file=sys.stderr)
         return None
