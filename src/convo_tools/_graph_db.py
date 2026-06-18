@@ -761,8 +761,6 @@ class GraphDB:
     def enrich_message_depth(self) -> int:
         reply_g = self.build_reply_graph()
         msg_ids = self.get_message_id_set()
-        idx_to_id = reply_g._idx_to_id
-        id_to_idx = reply_g._id_to_idx
         depths: dict[str, int] = {}
         for v in reply_g.vs:
             eid = v["name"]
@@ -939,42 +937,42 @@ class GraphDB:
 
     def enrich_all_semantics(self) -> dict[str, int]:
         print("Enriching entity mention counts...")
-        n = self.enrich_entity_mentions()
+        n_mentions = self.enrich_entity_mentions()
         self._conn().commit()
-        print(f"  Updated {n} entities")
+        print(f"  Updated {n_mentions} entities")
 
         print("Enriching message depth in reply chain...")
-        n = self.enrich_message_depth()
+        n_depth = self.enrich_message_depth()
         self._conn().commit()
-        print(f"  Updated {n} messages")
+        print(f"  Updated {n_depth} messages")
 
         print("Enriching message centrality scores...")
-        n = self.enrich_message_centrality()
+        n_centrality = self.enrich_message_centrality()
         self._conn().commit()
-        print(f"  Updated {n} messages")
+        print(f"  Updated {n_centrality} messages")
 
         print("Enriching keyword statistics...")
-        n = self.enrich_keyword_stats()
+        n_keywords = self.enrich_keyword_stats()
         self._conn().commit()
-        print(f"  Updated {n} keywords")
+        print(f"  Updated {n_keywords} keywords")
 
         print("Enriching conversation metadata...")
-        n = self.enrich_conv_meta()
+        n_conv = self.enrich_conv_meta()
         self._conn().commit()
-        print(f"  Updated {n} conversations")
+        print(f"  Updated {n_conv} conversations")
 
         print("Enriching entity domain clusters...")
-        n = self.enrich_entity_domains()
+        n_domains = self.enrich_entity_domains()
         self._conn().commit()
-        print(f"  Updated {n} entity domains")
+        print(f"  Updated {n_domains} entity domains")
 
         return {
-            "entity_mentions": n,
-            "message_depths": n,
-            "message_centrality": n,
-            "keyword_stats": n,
-            "conv_meta": n,
-            "entity_domains": n,
+            "entity_mentions": n_mentions,
+            "message_depths": n_depth,
+            "message_centrality": n_centrality,
+            "keyword_stats": n_keywords,
+            "conv_meta": n_conv,
+            "entity_domains": n_domains,
         }
 
     # ── Derived edges ───────────────────────────────────────────────────

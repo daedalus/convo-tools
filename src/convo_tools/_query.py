@@ -191,6 +191,8 @@ def _text_search(
     if not texts:
         return []
 
+    msg_lookup = {m["id"]: m for m in messages}
+
     vectorizer = TfidfVectorizer(
         max_features=5000,
         stop_words="english",
@@ -207,15 +209,16 @@ def _text_search(
         if sims[idx] < 0.05:
             break
         mid = msg_ids[idx]
+        m = msg_lookup[mid]
         results.append({
             "msg_id": mid,
             "score": float(sims[idx]),
-            "role": str(messages[idx].get("role", "?")),
-            "text": str(messages[idx].get("text", ""))[:500],
+            "role": str(m.get("role", "?")),
+            "text": str(m.get("text", ""))[:500],
             "entities": "",
             "keywords": "",
-            "conversation_id": str(messages[idx].get("conversation_id", "?")),
-            "timestamp": messages[idx].get("create_time"),
+            "conversation_id": str(m.get("conversation_id", "?")),
+            "timestamp": m.get("create_time"),
         })
     return results
 

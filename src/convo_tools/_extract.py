@@ -186,10 +186,11 @@ def run_extract(json_path: Path, pickle_path: Path) -> None:
             try:
                 conversation = _load_json_from_file(file)
                 conversation_id = file.stem
+                raw_msgs = extract_messages(conversation)
                 msgs = _process_conversation(conversation, conversation_id, seen_hashes)
                 print(
-                    f"  {file.name}: {len(extract_messages(conversation))} messages "
-                    f"({len(extract_messages(conversation)) - len(msgs)} deduped)"
+                    f"  {file.name}: {len(raw_msgs)} messages "
+                    f"({len(raw_msgs) - len(msgs)} deduped)"
                 )
                 all_messages.extend(msgs)
 

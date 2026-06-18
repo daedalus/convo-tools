@@ -762,7 +762,8 @@ def topic_clusters(
         "FROM edge_cooc "
         "JOIN entity_int a ON edge_cooc.entity_a_int = a.int_id "
         "JOIN entity_int b ON edge_cooc.entity_b_int = b.int_id "
-        f"WHERE weight >= {min_weight}"
+        "WHERE weight >= ?",
+        (min_weight,),
     ):
         a_idx = id_to_idx.get(r["entity_a"])
         b_idx = id_to_idx.get(r["entity_b"])
