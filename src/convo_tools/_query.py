@@ -259,23 +259,29 @@ def _build_llm_context(
     return "\n\n".join(parts)
 
 
-def _call_llm(query: str, context: str) -> str:
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
+def _call_llm(query: str, context: str, api_key: str = "", api_base: str = "", model: str = "") -> str:
+    if not api_key:
+        api_key = os.environ.get("OPENAI_API_KEY", "")
     if not api_key:
         return (
-            "Error: ANTHROPIC_API_KEY not set. Set it to use LLM-powered query mode, "
+            "Error: No API key provided. Set --api-key or OPENAI_API_KEY env var, "
             "or omit --llm for keyword-based search."
         )
 
     try:
-        import anthropic  # noqa: PLC0415
+        from openai import OpenAI  # noqa: PLC0415
     except ImportError:
         return (
-            "Error: anthropic package not installed. "
-            "Run: pip install anthropic"
+            "Error: openai package not installed. "
+            "Run: pip install openai"
         )
 
-    client = anthropic.Anthropic(api_key=api_key)
+    kwargs: dict[str, Any] = {"api_key": api_key}
+    if api_base:
+        kwargs["base_url"] = api_base
+    client = OpenAI(**kwargs)
+
+    model = model or os.environ.get("OPENAI_MODEL", "gpt-4o")
 
     system_prompt = (
         "You are a helpful assistant analyzing a knowledge graph of the user's conversation history. "
@@ -288,19 +294,15 @@ def _call_llm(query: str, context: str) -> str:
     user_prompt = f"The user asks: {query}\n\nRelevant context from conversation history:\n\n{context}"
 
     try:
-        message = client.messages.create(
-            model="claude-sonnet-4-20250514",
+        response = client.chat.completions.create(
+            model=model,
             max_tokens=2048,
-            system=system_prompt,
-            messages=[{"role": "user", "content": user_prompt}],
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
         )
-        content = ""
-        for block in message.content:
-            if hasattr(block, "text"):
-                content += block.text
-            elif isinstance(block, dict) and block.get("type") == "text":
-                content += block.get("text", "")
-        return content
+        return response.choices[0].message.content or ""
     except Exception as e:
         return f"Error calling LLM: {e}"
 
@@ -337,9 +339,12 @@ def run_query(db_path: str | Path, args: argparse.Namespace) -> None:
         print()
 
         if args.llm:
-            print("Building LLM context and calling Claude...", flush=True)
+            api_key = getattr(args, "api_key", "") or ""
+            api_base = getattr(args, "api_base", "") or ""
+            model = getattr(args, "model", "") or ""
+            print("Building LLM context and calling LLM...", flush=True)
             context = _build_llm_context(results, max_chars=args.max_context)
-            answer = _call_llm(query, context)
+            answer = _call_llm(query, context, api_key=api_key, api_base=api_base, model=model)
             print()
             print("═══ LLM Response ═══")
             print()

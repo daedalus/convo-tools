@@ -510,7 +510,19 @@ def _build_query_parser() -> argparse.ArgumentParser:
     )
     ap.add_argument(
         "--llm", action="store_true",
-        help="Use Claude LLM for intelligent summarization (requires ANTHROPIC_API_KEY)",
+        help="Use LLM for intelligent summarization (requires --api-key or OPENAI_API_KEY)",
+    )
+    ap.add_argument(
+        "--api-key", type=str, default="",
+        help="OpenAI API key (default: OPENAI_API_KEY env var)",
+    )
+    ap.add_argument(
+        "--api-base", type=str, default="",
+        help="OpenAI-compatible API base URL (for vLLM, Ollama, etc.)",
+    )
+    ap.add_argument(
+        "--model", type=str, default="",
+        help="Model name (default: OPENAI_MODEL env var or gpt-4o)",
     )
     ap.add_argument(
         "--top", type=int, default=10,

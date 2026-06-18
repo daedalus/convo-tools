@@ -180,23 +180,23 @@ def test_build_llm_context_truncation() -> None:
 def test_call_llm_no_api_key() -> None:
     with patch.dict("os.environ", {}, clear=True):
         result = _call_llm("test query", "some context")
-    assert "ANTHROPIC_API_KEY" in result
+    assert "OPENAI_API_KEY" in result
 
 
 def test_call_llm_import_error() -> None:
-    with patch.dict("os.environ", {"ANTHROPIC_API_KEY": "sk-test"}):
+    with patch.dict("os.environ", {"OPENAI_API_KEY": "sk-test"}):
         with patch("builtins.__import__", side_effect=ImportError):
             result = _call_llm("test query", "some context")
     assert "install" in result
 
 
 def test_call_llm_api_error() -> None:
-    with patch.dict("os.environ", {"ANTHROPIC_API_KEY": "sk-test"}):
-        mock_anthropic = MagicMock()
+    with patch.dict("os.environ", {"OPENAI_API_KEY": "sk-test"}):
+        mock_openai = MagicMock()
         mock_client = MagicMock()
-        mock_anthropic.Anthropic.return_value = mock_client
-        mock_client.messages.create.side_effect = Exception("API error")
-        with patch.dict("sys.modules", {"anthropic": mock_anthropic}):
+        mock_openai.OpenAI.return_value = mock_client
+        mock_client.chat.completions.create.side_effect = Exception("API error")
+        with patch.dict("sys.modules", {"openai": mock_openai}):
             result = _call_llm("test query", "some context")
     assert "Error" in result or "API" in result
 
