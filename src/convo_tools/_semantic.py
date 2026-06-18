@@ -20,8 +20,10 @@ def semantic_search(
     use_derived: bool = True,
     use_keywords: bool = True,
     min_similarity: float = 0.0,
+    fetch_text: bool = False,
 ) -> list[dict[str, Any]]:
     terms = [t.lower() for t in re.findall(r"\w+", query) if len(t) > 1]
+    text_limit = None if fetch_text else 500
 
     results: dict[str, dict[str, Any]] = {}
 
@@ -52,7 +54,7 @@ def semantic_search(
                     "id": mid,
                     "score": 0.0,
                     "role": node.get("role", "?") if node else "?",
-                    "text": (node.get("text", "") if node else "")[:500],
+                    "text": (node.get("text", "") if node else "")[:text_limit] if text_limit else (node.get("text", "") if node else ""),
                     "matched_entities": [],
                     "matched_keywords": [],
                     "source": "keyword",
@@ -75,7 +77,7 @@ def semantic_search(
                                 "id": mid,
                                 "score": 0.0,
                                 "role": mnode.get("role", "?") if mnode else "?",
-                                "text": (mnode.get("text", "") if mnode else "")[:500],
+                                "text": (mnode.get("text", "") if mnode else "")[:text_limit] if text_limit else (mnode.get("text", "") if mnode else ""),
                                 "matched_entities": [],
                                 "matched_keywords": [],
                                 "source": "keyword",
@@ -99,7 +101,7 @@ def semantic_search(
                                 "id": mid,
                                 "score": 0.0,
                                 "role": mnode.get("role", "?") if mnode else "?",
-                                "text": (mnode.get("text", "") if mnode else "")[:500],
+                                "text": (mnode.get("text", "") if mnode else "")[:text_limit] if text_limit else (mnode.get("text", "") if mnode else ""),
                                 "matched_entities": [],
                                 "matched_keywords": [],
                                 "source": "derived",
@@ -123,7 +125,7 @@ def semantic_search(
                                         "id": sim_id,
                                         "score": 0.0,
                                         "role": mnode.get("role", "?") if mnode else "?",
-                                        "text": (mnode.get("text", "") if mnode else "")[:500],
+                                        "text": (mnode.get("text", "") if mnode else "")[:text_limit] if text_limit else (mnode.get("text", "") if mnode else ""),
                                         "matched_entities": [],
                                         "matched_keywords": [],
                                         "source": "embedding",

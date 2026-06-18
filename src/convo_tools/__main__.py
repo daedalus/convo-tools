@@ -674,6 +674,10 @@ def _build_semantic_parser() -> argparse.ArgumentParser:
         "--no-keywords", action="store_true",
         help="Disable keyword/TF-IDF matching",
     )
+    ap.add_argument(
+        "--fetch-text", action="store_true",
+        help="Show full message text instead of truncated preview",
+    )
     return ap
 
 
@@ -891,6 +895,7 @@ def main() -> int:
             use_derived=not args.no_derived,
             use_keywords=not args.no_keywords,
             min_similarity=args.min_similarity,
+            fetch_text=args.fetch_text,
         )
         if not results:
             print("No matching results found.")
@@ -901,7 +906,10 @@ def main() -> int:
                 entities = ", ".join(r.get("matched_entities", [])[:3])
                 keywords = ", ".join(r.get("matched_keywords", [])[:3])
                 print(f"{i}. [{r['source']}] score={r['score']:.3f} role={r['role']}")
-                print(f"   {r['text'][:120]}...")
+                if args.fetch_text:
+                    print(f"   {r['text']}")
+                else:
+                    print(f"   {r['text'][:120]}...")
                 if entities:
                     print(f"   entities: {entities}")
                 if keywords:
