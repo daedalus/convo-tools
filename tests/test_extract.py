@@ -1,6 +1,58 @@
 from __future__ import annotations
 
 from convo_tools import extract_messages
+from convo_tools._extract import _is_base64
+
+
+def test_is_base64_valid() -> None:
+    import base64
+    payload = base64.b64encode(b"hello world this is a test message with enough length to pass the 100 char check").decode()
+    assert _is_base64(payload) is True
+
+
+def test_is_base64_data_uri() -> None:
+    assert _is_base64("data:image/png;base64,iVBORw0KGgo=") is True
+
+
+def test_is_base64_short_string() -> None:
+    assert _is_base64("hello") is False
+
+
+def test_is_base64_normal_text() -> None:
+    assert _is_base64("This is normal English text with spaces and punctuation. It has enough characters but is clearly not base64 encoded data at all.") is False
+
+
+def test_is_base64_invalid_chars() -> None:
+    long_invalid = "a" * 100 + "!!!"
+    assert _is_base64(long_invalid) is False
+
+
+def test_is_base64_invalid_padding() -> None:
+    invalid_pad = "A" * 100 + "==="
+    assert _is_base64(invalid_pad) is False
+
+
+def test_is_base64_empty() -> None:
+    assert _is_base64("") is False
+    assert _is_base64("   ") is False
+
+
+def test_extract_messages_filters_base64() -> None:
+    import base64
+    blob = base64.b64encode(b"x" * 200).decode()
+    conversation = {
+        "mapping": {
+            "m1": {
+                "message": {
+                    "author": {"role": "user"},
+                    "content": {"content_type": "text", "parts": ["Hello", blob, "World"]},
+                },
+            },
+        },
+    }
+    messages = extract_messages(conversation)
+    assert len(messages) == 1
+    assert messages[0]["text"] == "Hello\nWorld"
 
 
 def test_extract_messages_normal(sample_conversation: dict) -> None:
