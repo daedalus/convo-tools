@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gc
 import math
 import re
 from collections import Counter, defaultdict
@@ -603,6 +604,8 @@ def entity_centrality(
         })
 
     results.sort(key=lambda x: -x["betweenness"])
+    del cg, betweenness
+    gc.collect()
     return results[:limit]
 
 
@@ -836,6 +839,8 @@ def topic_clusters(
             })
 
     print()
+    del cg, entity_msgs, msg_keywords
+    gc.collect()
     return result_clusters
 
 

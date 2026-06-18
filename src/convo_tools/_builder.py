@@ -229,8 +229,9 @@ def build_graph_to_db(
 
         vectorizer = TfidfVectorizer(
             stop_words="english",
-            max_features=10000,
-            ngram_range=(1, 2),
+            max_features=5000,
+            ngram_range=(1, 1),
+            sublinear_tf=True,
         )
         x_mat = vectorizer.fit_transform(m["text"] for m in all_messages)
         feature_names = vectorizer.get_feature_names_out()
@@ -264,6 +265,9 @@ def build_graph_to_db(
         except Exception:
             conn.rollback()
             raise
+
+        del x_mat, vectorizer, feature_names
+        gc.collect()
 
     db.mark_messages_processed(new_msg_ids)
     print(f"  Marked {len(new_msg_ids)} messages as fully processed")

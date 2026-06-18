@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import gc
 import pickle
 import sys
 from typing import TYPE_CHECKING
@@ -139,6 +140,8 @@ def _compute_embeddings(
     print(f"  Embedding shape: {emb.shape}")
     print()
 
+    del inc_mat, svd
+    gc.collect()
     return emb, message_ids, nodes
 
 

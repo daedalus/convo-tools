@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import gc
 import os
 import pickle
 import re
@@ -223,6 +224,9 @@ def _text_search(
             "conversation_id": str(m.get("conversation_id", "?")),
             "timestamp": m.get("create_time"),
         })
+
+    del tfidf, vectorizer, q_vec, sims, msg_lookup
+    gc.collect()
     return results
 
 

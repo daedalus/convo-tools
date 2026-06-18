@@ -276,6 +276,8 @@ def compute_node2vec_embeddings(
     for node, idx in vocab.items():
         embeddings[node] = U[idx].astype(np.float32)
 
+    del U, g, id_to_idx, idx_to_id, vocab
+    gc.collect()
     return embeddings
 
 
