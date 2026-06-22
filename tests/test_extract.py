@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from convo_tools import extract_messages
-from convo_tools._extract import _is_base64
+from convo_tools._extract import _is_base64, _is_noise
 
 
 def test_is_base64_valid() -> None:
@@ -53,6 +53,22 @@ def test_extract_messages_filters_base64() -> None:
     messages = extract_messages(conversation)
     assert len(messages) == 1
     assert messages[0]["text"] == "Hello\nWorld"
+
+
+def test_is_noise_image_asset_pointer() -> None:
+    assert _is_noise("{'content_type': 'image_asset_pointer', 'asset_pointer': 'data:image/png;base64,abc'}") is True
+
+
+def test_is_noise_markdown_image() -> None:
+    assert _is_noise("![image](data:image/png;base64,iVBORw0KGgo)") is True
+
+
+def test_is_noise_normal_text() -> None:
+    assert _is_noise("This is normal text about Python performance.") is False
+
+
+def test_is_noise_short_asset_pointer() -> None:
+    assert _is_noise("image_asset_pointer") is True
 
 
 def test_extract_messages_normal(sample_conversation: dict) -> None:

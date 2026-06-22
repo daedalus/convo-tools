@@ -16,6 +16,7 @@ if TYPE_CHECKING:
 
 
 _BASE64_RE = re.compile(r"^[A-Za-z0-9+/=\s]+$")
+_ASSET_POINTER_RE = re.compile(r"image_asset_pointer|asset_pointer|data:image/|!\[.*\]\(data:image/")
 
 
 def _is_base64(s: str) -> bool:
@@ -36,9 +37,18 @@ def _is_base64(s: str) -> bool:
         return False
 
 
+def _is_noise(s: str) -> bool:
+    """Return True if string is noise (base64, asset pointers, etc.)."""
+    if _is_base64(s):
+        return True
+    if _ASSET_POINTER_RE.search(s):
+        return True
+    return False
+
+
 def _clean_parts(parts: list[str]) -> list[str]:
-    """Filter out base64 blobs from message parts."""
-    return [p for p in parts if not _is_base64(p)]
+    """Filter out base64 blobs and asset pointers from message parts."""
+    return [p for p in parts if not _is_noise(p)]
 
 
 def detect_lang(text: str) -> str:
